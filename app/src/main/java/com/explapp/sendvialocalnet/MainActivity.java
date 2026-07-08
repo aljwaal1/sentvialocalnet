@@ -2,7 +2,6 @@ package com.explapp.sendvialocalnet;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -23,12 +22,10 @@ import android.widget.Toast;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.ServerSocket;
@@ -40,6 +37,7 @@ public class MainActivity extends Activity {
     private static final int PICK_FILE = 77;
     private static final int PORT = 5051;
     private TextView logView;
+    private TextView phoneUrlView;
     private EditText ipBox;
     private volatile boolean serverRunning = false;
     private ServerSocket serverSocket;
@@ -64,11 +62,11 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         root.addView(title);
 
-        TextView info = new TextView(this);
-        info.setText("يعمل على Android 4.4 فأكثر. اجعل الهاتف والكمبيوتر على نفس شبكة Wi-Fi.\nعنوان هذا الهاتف للاستقبال: http://" + getLocalIp() + ":" + PORT + "/upload");
-        info.setTextSize(16);
-        info.setPadding(0, 18, 0, 18);
-        root.addView(info);
+        phoneUrlView = new TextView(this);
+        phoneUrlView.setText("يعمل على Android 4.4 فأكثر. اجعل الهاتف والكمبيوتر على نفس شبكة Wi-Fi.\nعنوان استقبال الهاتف:\nhttp://" + getLocalIp() + ":" + PORT + "/upload");
+        phoneUrlView.setTextSize(16);
+        phoneUrlView.setPadding(0, 18, 0, 18);
+        root.addView(phoneUrlView);
 
         ipBox = new EditText(this);
         ipBox.setHint("IP الكمبيوتر مثال: 192.168.1.20");
@@ -101,7 +99,7 @@ public class MainActivity extends Activity {
         logView.setPadding(0, 20, 0, 0);
         root.addView(logView);
         setContentView(scroll);
-        log("جاهز للعمل.");
+        log("جاهز للعمل. شغل الاستقبال عند رغبتك بإرسال ملف من الكمبيوتر إلى الهاتف.");
     }
 
     private void pickFile() {
@@ -126,7 +124,7 @@ public class MainActivity extends Activity {
 
     private void sendFile(String ip, Uri uri) {
         try {
-            log("جاري الإرسال إلى " + ip + " ...");
+            log("جاري الإرسال إلى الكمبيوتر " + ip + " ...");
             String boundary = "----LocalNetBoundary" + System.currentTimeMillis();
             URL url = new URL("http://" + ip + ":5050/upload");
             HttpURLConnection c = (HttpURLConnection) url.openConnection();
@@ -150,7 +148,7 @@ public class MainActivity extends Activity {
             out.flush();
             out.close();
             int code = c.getResponseCode();
-            log(code >= 200 && code < 300 ? "تم الإرسال بنجاح." : "فشل الإرسال، الكود: " + code);
+            log(code >= 200 && code < 300 ? "تم الإرسال للكمبيوتر بنجاح." : "فشل الإرسال، الكود: " + code);
         } catch (Exception e) {
             log("خطأ في الإرسال: " + e.getMessage());
         }
@@ -159,11 +157,13 @@ public class MainActivity extends Activity {
     private void startServer() {
         if (serverRunning) { log("الاستقبال يعمل بالفعل."); return; }
         serverRunning = true;
+        final String url = "http://" + getLocalIp() + ":" + PORT + "/upload";
+        phoneUrlView.setText("استقبال الهاتف يعمل على:\n" + url + "\nاكتب IP الهاتف في أداة الكمبيوتر ثم أرسل الملف.");
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
                     serverSocket = new ServerSocket(PORT);
-                    log("تم تشغيل الاستقبال: http://" + getLocalIp() + ":" + PORT + "/upload");
+                    log("تم تشغيل استقبال الهاتف: " + url);
                     while (serverRunning) {
                         Socket s = serverSocket.accept();
                         handleClient(s);
@@ -178,50 +178,124 @@ public class MainActivity extends Activity {
     private void handleClient(Socket socket) {
         try {
             InputStream in = new BufferedInputStream(socket.getInputStream());
-            ByteArrayOutputStream all = new ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            socket.setSoTimeout(5000);
-            while ((n = in.read(buf)) != -1) {
-                all.write(buf, 0, n);
-                if (n < buf.length) break;
+            ByteArrayOutputStream headerBytes = new ByteArrayOutputStream();
+            int matched = 0;
+            int b;
+            byte[] end = new byte[]{13, 10, 13, 10};
+            while ((b = in.read()) != -1) {
+                headerBytes.write(b);
+                if (b == end[matched]) {
+                    matched++;
+                    if (matched == 4) break;
+                } else {
+                    matched = (b == 13) ? 1 : 0;
+                }
             }
-            byte[] data = all.toByteArray();
-            String raw = new String(data, "ISO-8859-1");
-            int bodyStart = raw.indexOf("\r\n\r\n");
-            if (!raw.startsWith("POST") || bodyStart < 0) {
+            String header = new String(headerBytes.toByteArray(), "ISO-8859-1");
+            if (header.startsWith("OPTIONS")) {
+                writeResponse(socket, "200 OK", "OK");
+                socket.close();
+                return;
+            }
+            if (!header.startsWith("POST")) {
                 writeResponse(socket, "200 OK", "Send POST /upload");
                 socket.close();
                 return;
             }
-            String header = raw.substring(0, bodyStart);
-            String boundary = null;
-            int bi = header.indexOf("boundary=");
-            if (bi >= 0) boundary = "--" + header.substring(bi + 9).trim();
-            int fileHeaderEnd = raw.indexOf("\r\n\r\n", bodyStart + 4);
-            if (boundary == null || fileHeaderEnd < 0) throw new Exception("صيغة الملف غير صحيحة");
+
+            int contentLength = getContentLength(header);
+            if (contentLength <= 0) throw new Exception("لم يتم معرفة حجم الملف");
+            byte[] body = readExact(in, contentLength);
+            String bodyText = new String(body, "ISO-8859-1");
+            String boundary = getBoundary(header);
+            if (boundary == null) throw new Exception("صيغة الإرسال غير صحيحة");
+
+            int fileHeaderEnd = bodyText.indexOf("\r\n\r\n");
+            if (fileHeaderEnd < 0) throw new Exception("لم يتم العثور على بداية الملف");
+            String partHeader = bodyText.substring(0, fileHeaderEnd);
+            String fileName = extractFileName(partHeader);
             int fileStart = fileHeaderEnd + 4;
-            int fileEnd = raw.indexOf("\r\n" + boundary, fileStart);
-            if (fileEnd < 0) fileEnd = data.length;
+            int fileEnd = bodyText.indexOf("\r\n--" + boundary, fileStart);
+            if (fileEnd < 0) fileEnd = body.length;
+
             File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, "localnet_" + System.currentTimeMillis() + ".bin");
+            File f = new File(dir, safeFileName(fileName));
             FileOutputStream fos = new FileOutputStream(f);
-            fos.write(data, fileStart, Math.max(0, fileEnd - fileStart));
+            fos.write(body, fileStart, Math.max(0, fileEnd - fileStart));
             fos.close();
+
             writeResponse(socket, "200 OK", "OK");
             socket.close();
-            log("تم استقبال ملف وحفظه في Download: " + f.getName());
+            log("تم استقبال ملف من الكمبيوتر وحفظه في Download: " + f.getName());
         } catch (Exception e) {
             try { writeResponse(socket, "500 ERROR", e.getMessage()); socket.close(); } catch (Exception ignored) {}
             log("فشل استقبال ملف: " + e.getMessage());
         }
     }
 
+    private byte[] readExact(InputStream in, int len) throws Exception {
+        byte[] data = new byte[len];
+        int off = 0;
+        while (off < len) {
+            int n = in.read(data, off, len - off);
+            if (n == -1) break;
+            off += n;
+        }
+        if (off == len) return data;
+        byte[] smaller = new byte[off];
+        System.arraycopy(data, 0, smaller, 0, off);
+        return smaller;
+    }
+
+    private int getContentLength(String header) {
+        String[] lines = header.split("\r\n");
+        for (String line : lines) {
+            String lower = line.toLowerCase(Locale.US);
+            if (lower.startsWith("content-length:")) {
+                try { return Integer.parseInt(line.substring(15).trim()); } catch (Exception ignored) {}
+            }
+        }
+        return -1;
+    }
+
+    private String getBoundary(String header) {
+        int bi = header.indexOf("boundary=");
+        if (bi < 0) return null;
+        String value = header.substring(bi + 9).trim();
+        int end = value.indexOf("\r\n");
+        if (end >= 0) value = value.substring(0, end).trim();
+        if (value.startsWith("\"")) value = value.substring(1);
+        if (value.endsWith("\"")) value = value.substring(0, value.length() - 1);
+        return value;
+    }
+
+    private String extractFileName(String partHeader) {
+        int fi = partHeader.indexOf("filename=\"");
+        if (fi >= 0) {
+            int start = fi + 10;
+            int end = partHeader.indexOf("\"", start);
+            if (end > start) return partHeader.substring(start, end);
+        }
+        return "pc_file_" + System.currentTimeMillis() + ".bin";
+    }
+
+    private String safeFileName(String name) {
+        if (name == null || name.trim().length() == 0) name = "pc_file_" + System.currentTimeMillis() + ".bin";
+        name = name.replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_");
+        return System.currentTimeMillis() + "_" + name;
+    }
+
     private void writeResponse(Socket s, String status, String body) throws Exception {
         OutputStream out = s.getOutputStream();
         byte[] b = body.getBytes("UTF-8");
-        out.write(("HTTP/1.1 " + status + "\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " + b.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
+        out.write(("HTTP/1.1 " + status + "\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Allow-Methods: POST, OPTIONS, GET\r\n" +
+                "Access-Control-Allow-Headers: Content-Type\r\n" +
+                "Content-Type: text/plain; charset=utf-8\r\n" +
+                "Content-Length: " + b.length + "\r\n" +
+                "Connection: close\r\n\r\n").getBytes("UTF-8"));
         out.write(b);
         out.flush();
     }
