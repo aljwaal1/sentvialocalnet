@@ -41,6 +41,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int PICK_FILE = 77;
     private static final int PORT = 5051;
+    private static final int SOCKET_TIMEOUT_MS = 12000;
     private TextView logView;
     private TextView phoneUrlView;
     private EditText ipBox;
@@ -63,7 +64,7 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("إرسال محلي عبر الشبكة V2");
+        title.setText("إرسال محلي عبر الشبكة V3");
         title.setTextSize(24);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
@@ -119,7 +120,7 @@ public class MainActivity extends Activity {
         logView.setPadding(0, 20, 0, 0);
         root.addView(logView);
         setContentView(scroll);
-        log("جاهز. إذا ظهر 0.0.0.0 فهذا يعني أن الهاتف غير متصل بالشبكة أو لم يحصل على IP بعد.");
+        log("جاهز. النسخة V3 تمنع تعليق التطبيق عند فشل الإرسال أو انقطاع الاتصال.");
     }
 
     private void refreshIpText(boolean showToast) {
@@ -193,7 +194,7 @@ public class MainActivity extends Activity {
             int code = c.getResponseCode();
             log(code >= 200 && code < 300 ? "تم الإرسال للكمبيوتر بنجاح." : "فشل الإرسال، الكود: " + code);
         } catch (Exception e) {
-            log("خطأ في الإرسال: " + e.getMessage());
+            log("فشل إرسال الهاتف للكمبيوتر بدون تعليق: " + e.getMessage());
         }
     }
 
@@ -214,8 +215,11 @@ public class MainActivity extends Activity {
                     serverSocket = new ServerSocket(PORT);
                     log("تم تشغيل استقبال الهاتف: " + url);
                     while (serverRunning) {
-                        Socket s = serverSocket.accept();
-                        handleClient(s);
+                        final Socket s = serverSocket.accept();
+                        s.setSoTimeout(SOCKET_TIMEOUT_MS);
+                        new Thread(new Runnable() {
+                            @Override public void run() { handleClient(s); }
+                        }).start();
                     }
                 } catch (Exception e) {
                     if (serverRunning) log("خطأ في الاستقبال: " + e.getMessage());
@@ -226,6 +230,7 @@ public class MainActivity extends Activity {
 
     private void handleClient(Socket socket) {
         try {
+            socket.setSoTimeout(SOCKET_TIMEOUT_MS);
             InputStream in = new BufferedInputStream(socket.getInputStream());
             ByteArrayOutputStream headerBytes = new ByteArrayOutputStream();
             int matched = 0;
@@ -239,6 +244,7 @@ public class MainActivity extends Activity {
                 } else {
                     matched = (b == 13) ? 1 : 0;
                 }
+                if (headerBytes.size() > 65536) throw new Exception("رأس الطلب كبير جدًا");
             }
             String header = new String(headerBytes.toByteArray(), "ISO-8859-1");
             if (header.startsWith("OPTIONS")) {
@@ -254,6 +260,7 @@ public class MainActivity extends Activity {
 
             int contentLength = getContentLength(header);
             if (contentLength <= 0) throw new Exception("لم يتم معرفة حجم الملف");
+            if (contentLength > 500 * 1024 * 1024) throw new Exception("الملف كبير جدًا لهذه النسخة");
             byte[] body = readExact(in, contentLength);
             String bodyText = new String(body, "ISO-8859-1");
             String boundary = getBoundary(header);
@@ -278,23 +285,25 @@ public class MainActivity extends Activity {
             socket.close();
             log("تم استقبال ملف وحفظه في Download/SendViaLocalNet: " + f.getName());
         } catch (Exception e) {
-            try { writeResponse(socket, "500 ERROR", e.getMessage()); socket.close(); } catch (Exception ignored) {}
-            log("فشل استقبال ملف: " + e.getMessage());
+            try { writeResponse(socket, "500 ERROR", e.getMessage()); } catch (Exception ignored) {}
+            try { socket.close(); } catch (Exception ignored) {}
+            log("فشل استقبال ملف بدون تعليق: " + e.getMessage());
         }
     }
 
     private byte[] readExact(InputStream in, int len) throws Exception {
         byte[] data = new byte[len];
         int off = 0;
+        long lastProgress = System.currentTimeMillis();
         while (off < len) {
             int n = in.read(data, off, len - off);
             if (n == -1) break;
             off += n;
+            lastProgress = System.currentTimeMillis();
+            if (System.currentTimeMillis() - lastProgress > SOCKET_TIMEOUT_MS) throw new Exception("انقطع الإرسال");
         }
-        if (off == len) return data;
-        byte[] smaller = new byte[off];
-        System.arraycopy(data, 0, smaller, 0, off);
-        return smaller;
+        if (off != len) throw new Exception("الإرسال لم يكتمل. تم استلام " + off + " من " + len);
+        return data;
     }
 
     private int getContentLength(String header) {
