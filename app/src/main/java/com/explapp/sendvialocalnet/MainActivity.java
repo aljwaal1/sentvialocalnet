@@ -2,11 +2,11 @@ package com.explapp.sendvialocalnet;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -28,9 +28,14 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -41,6 +46,7 @@ public class MainActivity extends Activity {
     private EditText ipBox;
     private volatile boolean serverRunning = false;
     private ServerSocket serverSocket;
+    private String currentPhoneIp = "0.0.0.0";
 
     @Override
     protected void onCreate(Bundle b) {
@@ -57,21 +63,35 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("إرسال محلي عبر الشبكة");
+        title.setText("إرسال محلي عبر الشبكة V2");
         title.setTextSize(24);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
 
         phoneUrlView = new TextView(this);
-        phoneUrlView.setText("يعمل على Android 4.4 فأكثر. اجعل الهاتف والكمبيوتر على نفس شبكة Wi-Fi.\nعنوان استقبال الهاتف:\nhttp://" + getLocalIp() + ":" + PORT + "/upload");
-        phoneUrlView.setTextSize(16);
+        phoneUrlView.setTextSize(17);
         phoneUrlView.setPadding(0, 18, 0, 18);
         root.addView(phoneUrlView);
+        refreshIpText(false);
 
         ipBox = new EditText(this);
         ipBox.setHint("IP الكمبيوتر مثال: 192.168.1.20");
         ipBox.setInputType(InputType.TYPE_CLASS_TEXT);
         root.addView(ipBox);
+
+        Button refresh = new Button(this);
+        refresh.setText("تحديث عنوان الهاتف IP");
+        root.addView(refresh);
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { refreshIpText(true); }
+        });
+
+        Button copy = new Button(this);
+        copy.setText("نسخ عنوان الهاتف");
+        root.addView(copy);
+        copy.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { copyPhoneUrl(); }
+        });
 
         Button send = new Button(this);
         send.setText("اختيار ملف وإرساله للكمبيوتر");
@@ -99,7 +119,30 @@ public class MainActivity extends Activity {
         logView.setPadding(0, 20, 0, 0);
         root.addView(logView);
         setContentView(scroll);
-        log("جاهز للعمل. شغل الاستقبال عند رغبتك بإرسال ملف من الكمبيوتر إلى الهاتف.");
+        log("جاهز. إذا ظهر 0.0.0.0 فهذا يعني أن الهاتف غير متصل بالشبكة أو لم يحصل على IP بعد.");
+    }
+
+    private void refreshIpText(boolean showToast) {
+        currentPhoneIp = getBestLocalIp();
+        String url = "http://" + currentPhoneIp + ":" + PORT + "/upload";
+        if ("0.0.0.0".equals(currentPhoneIp)) {
+            phoneUrlView.setText("لم يتم العثور على IP حقيقي للهاتف.\nتأكد أن Wi‑Fi يعمل وأن الكمبيوتر والهاتف على نفس الشبكة.\nالعنوان الحالي غير صالح: " + url);
+        } else {
+            phoneUrlView.setText("عنوان استقبال الهاتف:\n" + url + "\nاكتب هذا IP في أداة الكمبيوتر أو استخدم البحث التلقائي.");
+        }
+        if (showToast) toast("تم تحديث IP: " + currentPhoneIp);
+    }
+
+    private void copyPhoneUrl() {
+        refreshIpText(false);
+        String text = "http://" + currentPhoneIp + ":" + PORT + "/upload";
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("SendViaLocalNet", text));
+            toast("تم نسخ العنوان");
+        } catch (Exception e) {
+            toast(text);
+        }
     }
 
     private void pickFile() {
@@ -156,9 +199,15 @@ public class MainActivity extends Activity {
 
     private void startServer() {
         if (serverRunning) { log("الاستقبال يعمل بالفعل."); return; }
+        refreshIpText(false);
+        if ("0.0.0.0".equals(currentPhoneIp)) {
+            log("لا يوجد IP حقيقي. اتصل بالواي فاي ثم اضغط تحديث IP.");
+            toast("لا يوجد IP حقيقي للهاتف");
+            return;
+        }
         serverRunning = true;
-        final String url = "http://" + getLocalIp() + ":" + PORT + "/upload";
-        phoneUrlView.setText("استقبال الهاتف يعمل على:\n" + url + "\nاكتب IP الهاتف في أداة الكمبيوتر ثم أرسل الملف.");
+        final String url = "http://" + currentPhoneIp + ":" + PORT + "/upload";
+        phoneUrlView.setText("استقبال الهاتف يعمل على:\n" + url + "\nأرسل الملف من أداة الكمبيوتر الآن.");
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
@@ -198,7 +247,7 @@ public class MainActivity extends Activity {
                 return;
             }
             if (!header.startsWith("POST")) {
-                writeResponse(socket, "200 OK", "Send POST /upload");
+                writeResponse(socket, "200 OK", "SendViaLocalNet READY " + currentPhoneIp);
                 socket.close();
                 return;
             }
@@ -218,7 +267,7 @@ public class MainActivity extends Activity {
             int fileEnd = bodyText.indexOf("\r\n--" + boundary, fileStart);
             if (fileEnd < 0) fileEnd = body.length;
 
-            File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "SendViaLocalNet");
             if (!dir.exists()) dir.mkdirs();
             File f = new File(dir, safeFileName(fileName));
             FileOutputStream fos = new FileOutputStream(f);
@@ -227,7 +276,7 @@ public class MainActivity extends Activity {
 
             writeResponse(socket, "200 OK", "OK");
             socket.close();
-            log("تم استقبال ملف من الكمبيوتر وحفظه في Download: " + f.getName());
+            log("تم استقبال ملف وحفظه في Download/SendViaLocalNet: " + f.getName());
         } catch (Exception e) {
             try { writeResponse(socket, "500 ERROR", e.getMessage()); socket.close(); } catch (Exception ignored) {}
             log("فشل استقبال ملف: " + e.getMessage());
@@ -306,13 +355,21 @@ public class MainActivity extends Activity {
         log("تم إيقاف الاستقبال.");
     }
 
-    private String getLocalIp() {
+    private String getBestLocalIp() {
         try {
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-            WifiInfo wi = wm.getConnectionInfo();
-            int ip = wi.getIpAddress();
-            return String.format(Locale.US, "%d.%d.%d.%d", (ip & 0xff), (ip >> 8 & 0xff), (ip >> 16 & 0xff), (ip >> 24 & 0xff));
-        } catch (Exception e) { return "0.0.0.0"; }
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface ni : Collections.list(interfaces)) {
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                for (InetAddress addr : Collections.list(addresses)) {
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        String ip = addr.getHostAddress();
+                        if (ip != null && !ip.startsWith("127.") && !"0.0.0.0".equals(ip)) return ip;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "0.0.0.0";
     }
 
     private void requestStoragePermission() {
