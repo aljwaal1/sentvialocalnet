@@ -4,12 +4,15 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.PowerManager;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -30,6 +33,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -41,13 +45,17 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int PICK_FILE = 77;
     private static final int PORT = 5051;
-    private static final int SOCKET_TIMEOUT_MS = 12000;
+    private static final int SOCKET_TIMEOUT_MS = 15000;
+    private static final int MAX_FILE_SIZE = 500 * 1024 * 1024;
+
     private TextView logView;
     private TextView phoneUrlView;
     private EditText ipBox;
     private volatile boolean serverRunning = false;
     private ServerSocket serverSocket;
     private String currentPhoneIp = "0.0.0.0";
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -64,7 +72,7 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("إرسال محلي عبر الشبكة V3");
+        title.setText("إرسال محلي عبر الشبكة V4");
         title.setTextSize(24);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
@@ -120,7 +128,7 @@ public class MainActivity extends Activity {
         logView.setPadding(0, 20, 0, 0);
         root.addView(logView);
         setContentView(scroll);
-        log("جاهز. النسخة V3 تمنع تعليق التطبيق عند فشل الإرسال أو انقطاع الاتصال.");
+        log("جاهز. V4 تعمل في الخلفية قدر الإمكان وتمسك Wi‑Fi أثناء الاستقبال.");
     }
 
     private void refreshIpText(boolean showToast) {
@@ -198,8 +206,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void startServer() {
-        if (serverRunning) { log("الاستقبال يعمل بالفعل."); return; }
+    private synchronized void startServer() {
+        if (serverRunning) {
+            log("الاستقبال يعمل بالفعل. لا تضغط تشغيل مرة ثانية.");
+            return;
+        }
         refreshIpText(false);
         if ("0.0.0.0".equals(currentPhoneIp)) {
             log("لا يوجد IP حقيقي. اتصل بالواي فاي ثم اضغط تحديث IP.");
@@ -207,13 +218,17 @@ public class MainActivity extends Activity {
             return;
         }
         serverRunning = true;
+        acquireLocks();
         final String url = "http://" + currentPhoneIp + ":" + PORT + "/upload";
-        phoneUrlView.setText("استقبال الهاتف يعمل على:\n" + url + "\nأرسل الملف من أداة الكمبيوتر الآن.");
+        phoneUrlView.setText("استقبال الهاتف يعمل في الخلفية على:\n" + url + "\nيمكن قفل الشاشة، لكن لا تغلق التطبيق إجباريًا.");
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    serverSocket = new ServerSocket(PORT);
-                    log("تم تشغيل استقبال الهاتف: " + url);
+                    ServerSocket ss = new ServerSocket();
+                    ss.setReuseAddress(true);
+                    ss.bind(new InetSocketAddress(PORT));
+                    serverSocket = ss;
+                    log("تم تشغيل الاستقبال. سيستمر مع قفل الشاشة قدر الإمكان: " + url);
                     while (serverRunning) {
                         final Socket s = serverSocket.accept();
                         s.setSoTimeout(SOCKET_TIMEOUT_MS);
@@ -223,6 +238,9 @@ public class MainActivity extends Activity {
                     }
                 } catch (Exception e) {
                     if (serverRunning) log("خطأ في الاستقبال: " + e.getMessage());
+                    serverRunning = false;
+                    closeServerSocket();
+                    releaseLocks();
                 }
             }
         }).start();
@@ -260,7 +278,7 @@ public class MainActivity extends Activity {
 
             int contentLength = getContentLength(header);
             if (contentLength <= 0) throw new Exception("لم يتم معرفة حجم الملف");
-            if (contentLength > 500 * 1024 * 1024) throw new Exception("الملف كبير جدًا لهذه النسخة");
+            if (contentLength > MAX_FILE_SIZE) throw new Exception("الملف كبير جدًا لهذه النسخة");
             byte[] body = readExact(in, contentLength);
             String bodyText = new String(body, "ISO-8859-1");
             String boundary = getBoundary(header);
@@ -294,13 +312,10 @@ public class MainActivity extends Activity {
     private byte[] readExact(InputStream in, int len) throws Exception {
         byte[] data = new byte[len];
         int off = 0;
-        long lastProgress = System.currentTimeMillis();
         while (off < len) {
             int n = in.read(data, off, len - off);
             if (n == -1) break;
             off += n;
-            lastProgress = System.currentTimeMillis();
-            if (System.currentTimeMillis() - lastProgress > SOCKET_TIMEOUT_MS) throw new Exception("انقطع الإرسال");
         }
         if (off != len) throw new Exception("الإرسال لم يكتمل. تم استلام " + off + " من " + len);
         return data;
@@ -358,10 +373,48 @@ public class MainActivity extends Activity {
         out.flush();
     }
 
-    private void stopServer() {
+    private synchronized void stopServer() {
         serverRunning = false;
+        closeServerSocket();
+        releaseLocks();
+        log("تم إيقاف الاستقبال وتحرير المنفذ 5051.");
+    }
+
+    private void closeServerSocket() {
         try { if (serverSocket != null) serverSocket.close(); } catch (Exception ignored) {}
-        log("تم إيقاف الاستقبال.");
+        serverSocket = null;
+    }
+
+    private void acquireLocks() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && wakeLock == null) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SendViaLocalNet:ReceiverWakeLock");
+                wakeLock.setReferenceCounted(false);
+                wakeLock.acquire();
+            }
+        } catch (Exception e) { log("تعذر تشغيل WakeLock: " + e.getMessage()); }
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && wifiLock == null) {
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL, "SendViaLocalNetWifiLock");
+                wifiLock.setReferenceCounted(false);
+                wifiLock.acquire();
+            }
+        } catch (Exception e) { log("تعذر تشغيل WifiLock: " + e.getMessage()); }
+    }
+
+    private void releaseLocks() {
+        try { if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); } catch (Exception ignored) {}
+        try { if (wifiLock != null && wifiLock.isHeld()) wifiLock.release(); } catch (Exception ignored) {}
+        wakeLock = null;
+        wifiLock = null;
+    }
+
+    @Override
+    protected void onDestroy() {
+        stopServer();
+        super.onDestroy();
     }
 
     private String getBestLocalIp() {
