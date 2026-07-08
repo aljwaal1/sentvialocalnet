@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>إرسال محلي - الكمبيوتر إلى الهاتف</title>
+<title>إرسال محلي V5 - الكمبيوتر إلى الهاتف</title>
 <style>
 :root{--g:#2e7d32;--bg:#f3f7f4;--card:#fff;--txt:#132017;--mut:#607568}
 body{font-family:Tahoma,Arial,sans-serif;background:var(--bg);margin:0;padding:24px;color:var(--txt)}
@@ -17,25 +17,23 @@ button{border:0;border-radius:14px;background:var(--g);color:white;font-size:17p
 </head>
 <body>
 <div class="card">
-<h1>إرسال ملف من الكمبيوتر إلى الهاتف</h1>
-<p class="hint">افتح تطبيق الأندرويد واضغط <b>تشغيل استقبال الملفات على الهاتف</b>. بعدها اضغط بحث تلقائي هنا. إذا لم يظهر الهاتف، اكتب IP يدويًا.</p>
+<h1>إرسال ملف من الكمبيوتر إلى الهاتف V5</h1>
+<p class="hint">هذه النسخة ترسل الملف مباشرة Raw Stream، وهي أفضل للملفات الكبيرة مثل ٨٩ ميجا. افتح تطبيق الأندرويد V5 واضغط <b>تشغيل استقبال الملفات على الهاتف</b>.</p>
 
 <div class="row">
   <div>
     <label>شبكة الفحص</label>
     <select id="subnet">
       <option value="192.168.1">192.168.1.x</option>
-      <option value="192.168.0">192.168.0.x</option>
       <option value="192.168.8">192.168.8.x</option>
+      <option value="192.168.0">192.168.0.x</option>
       <option value="10.0.0">10.0.0.x</option>
       <option value="172.16.0">172.16.0.x</option>
     </select>
-    <p class="small">اختيار الشبكة يساعد المتصفح في العثور على الهاتف.</p>
   </div>
   <div>
-    <label>IP الهاتف يدويًا عند الحاجة</label>
-    <input id="phoneIp" placeholder="مثال: 192.168.1.10" inputmode="numeric">
-    <p class="small">سيتم تعبئته تلقائيًا عند العثور على الهاتف.</p>
+    <label>IP الهاتف</label>
+    <input id="phoneIp" placeholder="مثال: 192.168.8.105" inputmode="numeric">
   </div>
 </div>
 
@@ -46,12 +44,12 @@ button{border:0;border-radius:14px;background:var(--g);color:white;font-size:17p
 
 <div id="devices" class="devices"></div>
 
-<label>اختر ملفًا من الكمبيوتر</label>
+<label>اختر ملفات من الكمبيوتر</label>
 <input id="fileInput" type="file" multiple>
-<button id="sendBtn" onclick="sendFiles()">إرسال للهاتف المختار</button>
+<button id="sendBtn" onclick="sendFiles()">إرسال للهاتف</button>
 
-<div id="status" class="status">جاهز. شغّل الاستقبال في تطبيق الأندرويد ثم اضغط بحث تلقائي.</div>
-<p class="small"><span class="pill">المنفذ 5051</span><span class="pill">HTML واحد</span><span class="pill">بدون تثبيت</span></p>
+<div id="status" class="status">جاهز. شغّل استقبال الهاتف أولًا.</div>
+<p class="small"><span class="pill">V5 Streaming</span><span class="pill">مناسب للملفات الكبيرة</span><span class="pill">الحفظ في Download/SendViaLocalNet</span></p>
 </div>
 
 <script>
@@ -59,7 +57,7 @@ let scanning=false;
 let selectedIp='';
 function $(id){return document.getElementById(id)}
 function setStatus(t){$('status').textContent=t}
-function choose(ip){selectedIp=ip;$('phoneIp').value=ip;setStatus('تم اختيار الهاتف: '+ip+'\nاختر ملفًا ثم اضغط إرسال.');}
+function choose(ip){selectedIp=ip;$('phoneIp').value=ip;setStatus('تم اختيار الهاتف: '+ip+'\nاختر الملف واضغط إرسال.');}
 function stopScan(){scanning=false;setStatus('تم إيقاف البحث.');}
 async function ping(ip){
   const ctrl=new AbortController();
@@ -67,60 +65,59 @@ async function ping(ip){
   try{
     const r=await fetch('http://'+ip+':5051/upload',{method:'GET',mode:'cors',signal:ctrl.signal});
     clearTimeout(timer);
-    if(r.ok){return true}
+    if(r.ok)return true;
   }catch(e){clearTimeout(timer)}
   return false;
 }
 async function scanNetwork(){
-  scanning=true;
-  $('devices').innerHTML='';
-  selectedIp='';
-  const subnet=$('subnet').value;
-  setStatus('جاري البحث في الشبكة '+subnet+'.x ...\nقد يستغرق الأمر قليلًا.');
-  const found=[];
-  for(let start=1;start<=254 && scanning;start+=16){
+  scanning=true;$('devices').innerHTML='';selectedIp='';
+  const subnet=$('subnet').value;const found=[];
+  setStatus('جاري البحث في '+subnet+'.x ...');
+  for(let start=1;start<=254&&scanning;start+=16){
     const jobs=[];
-    for(let i=start;i<start+16 && i<=254;i++){
-      const ip=subnet+'.'+i;
-      jobs.push(ping(ip).then(ok=>({ip,ok})));
-    }
+    for(let i=start;i<start+16&&i<=254;i++){const ip=subnet+'.'+i;jobs.push(ping(ip).then(ok=>({ip,ok})));}
     const results=await Promise.all(jobs);
-    for(const r of results){
-      if(r.ok && !found.includes(r.ip)){
-        found.push(r.ip);
-        addDevice(r.ip);
-        if(!selectedIp) choose(r.ip);
-      }
-    }
-    setStatus('جاري البحث... تم فحص حتى '+subnet+'.'+Math.min(start+15,254)+'\nالأجهزة الموجودة: '+found.length);
+    for(const r of results){if(r.ok&&!found.includes(r.ip)){found.push(r.ip);addDevice(r.ip);if(!selectedIp)choose(r.ip);}}
+    setStatus('تم فحص حتى '+subnet+'.'+Math.min(start+15,254)+'\nالأجهزة الموجودة: '+found.length);
   }
   scanning=false;
-  setStatus(found.length?'انتهى البحث. اختر الجهاز ثم أرسل الملف.':'لم يتم العثور على الهاتف. تأكد من تشغيل الاستقبال أو جرّب شبكة أخرى من القائمة.');
+  setStatus(found.length?'انتهى البحث. اختر الجهاز ثم أرسل.':'لم يتم العثور على الهاتف. اكتب IP يدويًا كما يظهر في تطبيق الأندرويد.');
 }
 function addDevice(ip){
-  const d=document.createElement('div');
-  d.className='dev';
+  const d=document.createElement('div');d.className='dev';
   d.innerHTML='<div><b>📱 هاتف Android</b><br><span class="small">'+ip+':5051</span></div><button onclick="choose(\''+ip+'\')">اختيار</button>';
   $('devices').appendChild(d);
 }
 async function sendFiles(){
   const ip=($('phoneIp').value.trim()||selectedIp);
   const files=$('fileInput').files;
-  if(!ip){setStatus('اختر الهاتف من البحث أو اكتب IP الهاتف.');return}
+  if(!ip){setStatus('اكتب IP الهاتف أو اختره من البحث.');return}
   if(!files.length){setStatus('اختر ملفًا واحدًا على الأقل.');return}
   $('sendBtn').disabled=true;
-  let ok=0, fail=0;
+  let ok=0,fail=0;
   for(const file of files){
-    setStatus('جاري إرسال: '+file.name+'\nإلى: '+ip);
-    const form=new FormData();
-    form.append('file',file,file.name);
+    setStatus('جاري إرسال: '+file.name+'\nالحجم: '+formatSize(file.size)+'\nإلى: '+ip+'\nلا تغلق الصفحة أثناء الإرسال.');
     try{
-      const r=await fetch('http://'+ip+':5051/upload',{method:'POST',body:form});
-      if(r.ok) ok++; else fail++;
-    }catch(e){fail++; setStatus('فشل إرسال '+file.name+'\n'+e.message)}
+      const r=await fetch('http://'+ip+':5051/upload',{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/octet-stream',
+          'X-File-Name':encodeURIComponent(file.name),
+          'X-File-Size':String(file.size)
+        },
+        body:file
+      });
+      if(r.ok){ok++;setStatus('تم إرسال '+file.name+' بنجاح.')}else{fail++;setStatus('فشل إرسال '+file.name+'\nالكود: '+r.status+'\n'+await r.text().catch(()=>''));}
+    }catch(e){fail++;setStatus('فشل إرسال '+file.name+'\n'+e.message+'\nتأكد أن شاشة الهاتف لم تغلق Wi-Fi وأن التطبيق على وضع الاستقبال.');}
   }
   $('sendBtn').disabled=false;
-  setStatus('انتهى الإرسال.\nنجح: '+ok+'\nفشل: '+fail+'\nافتح Download على الهاتف.');
+  setStatus('انتهى الإرسال.\nنجح: '+ok+'\nفشل: '+fail+'\nافتح Download/SendViaLocalNet على الهاتف.');
+}
+function formatSize(bytes){
+  if(bytes<1024)return bytes+' B';
+  if(bytes<1024*1024)return (bytes/1024).toFixed(1)+' KB';
+  if(bytes<1024*1024*1024)return (bytes/1024/1024).toFixed(1)+' MB';
+  return (bytes/1024/1024/1024).toFixed(1)+' GB';
 }
 </script>
 </body>
