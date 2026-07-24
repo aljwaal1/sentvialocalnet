@@ -8,11 +8,13 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 final class DeviceStore {
     private static final String PREFS = "send_via_local_net";
     private static final String KEY_DEVICES = "devices";
     private static final String KEY_MY_NAME = "my_name";
+    private static final String KEY_MY_ID = "my_device_id";
     private final SharedPreferences prefs;
 
     DeviceStore(Context context) {
@@ -28,6 +30,15 @@ final class DeviceStore {
         prefs.edit().putString(KEY_MY_NAME, value == null || value.trim().length() == 0 ? "هاتف Android" : value.trim()).apply();
     }
 
+    synchronized String getMyId() {
+        String value = prefs.getString(KEY_MY_ID, "");
+        if (value == null || value.trim().length() == 0) {
+            value = "android-" + UUID.randomUUID().toString();
+            prefs.edit().putString(KEY_MY_ID, value).commit();
+        }
+        return value;
+    }
+
     ArrayList<DeviceRecord> load() {
         ArrayList<DeviceRecord> devices = new ArrayList<DeviceRecord>();
         try {
@@ -37,6 +48,7 @@ final class DeviceStore {
                 String ip = item.optString("ip", "");
                 if (!LocalDiscovery.isIpv4(ip)) continue;
                 devices.add(new DeviceRecord(
+                        item.optString("id", ""),
                         item.optString("name", "جهاز " + ip),
                         ip,
                         item.optString("type", "device"),
@@ -52,6 +64,7 @@ final class DeviceStore {
         try {
             for (DeviceRecord device : devices) {
                 JSONObject item = new JSONObject();
+                item.put("id", device.id);
                 item.put("name", device.name);
                 item.put("ip", device.ip);
                 item.put("type", device.type);
