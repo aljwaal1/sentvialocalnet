@@ -1,0 +1,22 @@
+# Android private signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
+app/release-keystore.*
+
+# Android / Gradle build outputs
+.gradle/
+**/build/
+local.properties
+
+# Python / Windows build outputs
+__pycache__/
+*.pyc
+desktop/build/
+desktop/dist/
+
+# Local environment
+.env
+.venv/
+venv/

@@ -45,6 +45,25 @@ jobs:
       - name: Install Android platform
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Configure secure signing when secrets exist
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.SVLN_KEYSTORE_B64 }}
+          STORE_PASSWORD_SECRET: ${{ secrets.SVLN_STORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.SVLN_KEY_ALIAS }}
+          KEY_PASSWORD_SECRET: ${{ secrets.SVLN_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$STORE_PASSWORD_SECRET" ] && [ -n "$KEY_ALIAS_SECRET" ] && [ -n "$KEY_PASSWORD_SECRET" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > app/release-keystore.jks
+            echo "SVLN_KEYSTORE_PATH=$GITHUB_WORKSPACE/app/release-keystore.jks" >> "$GITHUB_ENV"
+            echo "SVLN_STORE_PASSWORD=$STORE_PASSWORD_SECRET" >> "$GITHUB_ENV"
+            echo "SVLN_KEY_ALIAS=$KEY_ALIAS_SECRET" >> "$GITHUB_ENV"
+            echo "SVLN_KEY_PASSWORD=$KEY_PASSWORD_SECRET" >> "$GITHUB_ENV"
+            echo "Secure Android signing enabled."
+          else
+            echo "Signing secrets are not configured; using the runner debug key for this build."
+          fi
+
       - name: Build APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
@@ -74,4 +93,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apk/send-via-local-net.apk DOWNLOAD_APK.md
           git commit -m "Build Android APK [skip ci]" || echo "No changes"
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main

@@ -1,25 +1,27 @@
 plugins { id 'com.android.application' }
 
-// A repository-owned development key keeps APK signatures stable between
-// GitHub Actions runners, so future APK builds can update this version.
-def stableKeystoreSource = file('debug-keystore.b64')
-def stableKeystoreFile = file("${buildDir}/generated/svln-debug.jks")
-if (stableKeystoreSource.exists()) {
-    stableKeystoreFile.parentFile.mkdirs()
-    stableKeystoreFile.bytes = stableKeystoreSource.text.trim().decodeBase64()
-}
+// Secure signing is enabled only when GitHub Actions (or a local developer)
+// provides a keystore path and credentials through environment variables.
+def secureKeystorePath = System.getenv('SVLN_KEYSTORE_PATH')
+def secureStorePassword = System.getenv('SVLN_STORE_PASSWORD')
+def secureKeyAlias = System.getenv('SVLN_KEY_ALIAS')
+def secureKeyPassword = System.getenv('SVLN_KEY_PASSWORD')
+def hasSecureSigning = secureKeystorePath != null && secureKeystorePath.trim().length() > 0 &&
+        secureStorePassword != null && secureKeyAlias != null && secureKeyPassword != null &&
+        file(secureKeystorePath).exists()
 
 android {
     namespace 'com.explapp.sendvialocalnet'
     compileSdk 35
 
     signingConfigs {
-        stableDebug {
-            storeFile stableKeystoreFile
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-            storeType 'JKS'
+        if (hasSecureSigning) {
+            secureRelease {
+                storeFile file(secureKeystorePath)
+                storePassword secureStorePassword
+                keyAlias secureKeyAlias
+                keyPassword secureKeyPassword
+            }
         }
     }
 
@@ -27,13 +29,13 @@ android {
         applicationId 'com.explapp.sendvialocalnet'
         minSdk 19
         targetSdk 28
-        versionCode 3
-        versionName '2.0.1'
+        versionCode 4
+        versionName '2.0.2'
     }
 
     buildTypes {
         debug {
-            signingConfig signingConfigs.stableDebug
+            if (hasSecureSigning) signingConfig signingConfigs.secureRelease
         }
     }
 
