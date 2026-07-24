@@ -124,7 +124,7 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi() {
-        getWindow().setStatusBarColor(Color.rgb(38, 45, 94));
+        if (Build.VERSION.SDK_INT >= 21) getWindow().setStatusBarColor(Color.rgb(38, 45, 94));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -258,7 +258,7 @@ public class MainActivity extends Activity {
         log("تم تشغيل واجهة Pro. الاستقبال سيبدأ تلقائيًا.");
     }
 
-    private TextView sectionTitle(String title, String subtitle) {
+    private LinearLayout sectionTitle(String title, String subtitle) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         TextView t = text(title, 19, Color.rgb(16, 24, 40), true);
@@ -266,23 +266,7 @@ public class MainActivity extends Activity {
         s.setPadding(0, dp(3), 0, dp(12));
         box.addView(t);
         box.addView(s);
-        return wrapAsTextContainer(box);
-    }
-
-    private TextView wrapAsTextContainer(final LinearLayout content) {
-        TextView holder = new TextView(this) {
-            @Override protected void onAttachedToWindow() {
-                super.onAttachedToWindow();
-                if (content.getParent() == null && getParent() instanceof LinearLayout) {
-                    LinearLayout parent = (LinearLayout)getParent();
-                    int index = parent.indexOfChild(this);
-                    parent.removeView(this);
-                    parent.addView(content, index);
-                }
-            }
-        };
-        holder.setVisibility(View.GONE);
-        return holder;
+        return box;
     }
 
     private void addOrUpdateDevice() {
