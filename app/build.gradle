@@ -3,7 +3,7 @@ plugins { id 'com.android.application' }
 // A repository-owned development key keeps APK signatures stable between
 // GitHub Actions runners, so future APK builds can update this version.
 def stableKeystoreSource = file('debug-keystore.b64')
-def stableKeystoreFile = file("${buildDir}/generated/svln-debug.p12")
+def stableKeystoreFile = file("${buildDir}/generated/svln-debug.jks")
 if (stableKeystoreSource.exists()) {
     stableKeystoreFile.parentFile.mkdirs()
     stableKeystoreFile.bytes = stableKeystoreSource.text.trim().decodeBase64()
@@ -19,7 +19,7 @@ android {
             storePassword 'android'
             keyAlias 'androiddebugkey'
             keyPassword 'android'
-            storeType 'PKCS12'
+            storeType 'JKS'
         }
     }
 
