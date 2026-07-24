@@ -20,16 +20,21 @@ final class DeviceScanner {
 
     interface Listener {
         void onDevice(String name, String type, String ip);
+        default void onIdentifiedDevice(String deviceId, String name, String type, String ip) {
+            onDevice(name, type, ip);
+        }
         void onFinished(int count);
         void onLog(String message);
     }
 
     private static class Found {
+        String id;
         String name;
         String type;
         String ip;
 
-        Found(String name, String type, String ip) {
+        Found(String id, String name, String type, String ip) {
+            this.id = id == null ? "" : id;
             this.name = name;
             this.type = type;
             this.ip = ip;
@@ -53,7 +58,11 @@ final class DeviceScanner {
 
         discovery.discover(new LocalDiscovery.Listener() {
             @Override public void onDevice(String name, String type, String ip, int port) {
-                if (port == PORT) report(currentGeneration, ownIp, name, type, ip, seen, listener);
+                if (port == PORT) report(currentGeneration, ownIp, "", name, type, ip, seen, listener);
+            }
+
+            @Override public void onIdentifiedDevice(String deviceId, String name, String type, String ip, int port) {
+                if (port == PORT) report(currentGeneration, ownIp, deviceId, name, type, ip, seen, listener);
             }
 
             @Override public void onFinished(int responses) {
@@ -96,7 +105,7 @@ final class DeviceScanner {
             if (currentGeneration != generation.get()) break;
             try {
                 Found found = future.get();
-                if (found != null) report(currentGeneration, ownIp, found.name, found.type, found.ip, seen, listener);
+                if (found != null) report(currentGeneration, ownIp, found.id, found.name, found.type, found.ip, seen, listener);
             } catch (Exception ignored) {}
         }
         probes.shutdownNow();
@@ -124,7 +133,8 @@ final class DeviceScanner {
             String[] parts = body.split("\\|", -1);
             String name = parts.length > 1 && parts[1].trim().length() > 0 ? parts[1].trim() : "جهاز " + host;
             String type = parts.length > 2 && parts[2].trim().length() > 0 ? parts[2].trim() : "device";
-            return new Found(name, type, host);
+            String deviceId = parts.length > 3 ? parts[3].trim() : "";
+            return new Found(deviceId, name, type, host);
         } catch (Exception ignored) {
             return null;
         } finally {
@@ -132,11 +142,12 @@ final class DeviceScanner {
         }
     }
 
-    private void report(int currentGeneration, String ownIp, String name, String type, String ip,
+    private void report(int currentGeneration, String ownIp, String deviceId, String name, String type, String ip,
                         Set<String> seen, Listener listener) {
         if (currentGeneration != generation.get()) return;
-        if (!LocalDiscovery.isIpv4(ip) || ip.equals(ownIp) || !seen.add(ip)) return;
-        listener.onDevice(name, type, ip);
+        String key = deviceId != null && deviceId.length() > 0 ? "id:" + deviceId : "ip:" + ip;
+        if (!LocalDiscovery.isIpv4(ip) || ip.equals(ownIp) || !seen.add(key)) return;
+        listener.onIdentifiedDevice(deviceId == null ? "" : deviceId, name, type, ip);
     }
 
     private void sourceFinished(int currentGeneration, AtomicInteger sources, Set<String> seen, Listener listener) {
