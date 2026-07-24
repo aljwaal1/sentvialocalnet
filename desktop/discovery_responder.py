@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import threading
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -58,7 +59,7 @@ class DiscoveryResponder:
                 ip = self.ip_provider()
                 if not ip or ip.startswith("127."):
                     continue
-                reply = f"SVLN_DEVICE|{name}|windows|{ip}|{TRANSFER_PORT}".encode("utf-8")
+                reply = f"SVLN_DEVICE|{name}|windows|{ip}|{TRANSFER_PORT}|{config_id()}".encode("utf-8")
                 try:
                     sock.sendto(reply, sender)
                 except OSError:
@@ -73,16 +74,46 @@ class DiscoveryResponder:
             self._running = False
 
 
-def config_name() -> str:
+def _config_path() -> Path:
     root = Path(os.getenv("APPDATA") or (Path.home() / ".config")) / "SendViaLocalNet"
-    path = root / "config.json"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "config.json"
+
+
+def _read_config() -> dict:
+    path = _config_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        value = str(data.get("device_name") or "").strip()
-        if value:
-            return value
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_config(data: dict) -> None:
+    path = _config_path()
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def config_id() -> str:
+    data = _read_config()
+    value = str(data.get("device_id") or "").strip()
+    if value:
+        return value
+    value = "windows-" + str(uuid.uuid4())
+    data["device_id"] = value
+    try:
+        _write_config(data)
     except Exception:
         pass
+    return value
+
+
+def config_name() -> str:
+    data = _read_config()
+    value = str(data.get("device_name") or "").strip()
+    if value:
+        return value
     return socket.gethostname() or "كمبيوتر Windows"
 
 
