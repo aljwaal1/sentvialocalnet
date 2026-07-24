@@ -9,11 +9,17 @@
 
     <application
         android:allowBackup="true"
-        android:label="إرسال محلي"
+        android:hardwareAccelerated="true"
+        android:label="نقل محلي Pro"
+        android:requestLegacyExternalStorage="true"
+        android:resizeableActivity="true"
+        android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true"
-        android:resizeableActivity="true">
-        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
+        android:usesCleartextTraffic="true">
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
