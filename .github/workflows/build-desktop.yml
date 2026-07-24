@@ -34,15 +34,13 @@ jobs:
         run: python -m py_compile desktop/app.py
 
       - name: Build standalone EXE
-        shell: cmd
-        run: >-
-          pyinstaller --noconfirm --clean --onefile --windowed
-          --name SendViaLocalNet
-          --add-data "desktop/web;web"
-          --distpath desktop/dist
-          --workpath desktop/build
-          --specpath desktop
-          desktop/app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SendViaLocalNet --add-data "desktop/web;web" --distpath desktop/dist --workpath desktop/build desktop/app.py
+
+      - name: Verify standalone EXE
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "desktop/dist/SendViaLocalNet.exe")) { throw "EXE was not created" }
+          Get-Item "desktop/dist/SendViaLocalNet.exe"
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
