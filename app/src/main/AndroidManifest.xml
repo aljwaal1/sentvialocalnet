@@ -24,6 +24,10 @@
         <activity
             android:name=".SimpleMainActivity"
             android:configChanges="keyboardHidden|orientation|screenSize"
+            android:exported="false" />
+        <activity
+            android:name=".StableMainActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
