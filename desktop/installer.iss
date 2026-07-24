@@ -10,7 +10,7 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\SendViaLocalNet
 DefaultGroupName={#MyAppName}
-OutputDir=..\release
+OutputDir=release
 OutputBaseFilename=SendViaLocalNet-Setup
 Compression=lzma2
 SolidCompression=yes
@@ -19,7 +19,6 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
-SetupIconFile=
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -29,7 +28,7 @@ Name: "desktopicon"; Description: "إنشاء اختصار على سطح الم�
 Name: "startup"; Description: "تشغيل الاستقبال تلقائيًا عند تسجيل الدخول"; GroupDescription: "التشغيل التلقائي:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\SendViaLocalNet.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\SendViaLocalNet.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
