@@ -25,10 +25,14 @@ public final class LocalDiscovery {
 
     public interface NameProvider {
         String getDeviceName();
+        default String getDeviceId() { return ""; }
     }
 
     public interface Listener {
         void onDevice(String name, String type, String ip, int port);
+        default void onIdentifiedDevice(String deviceId, String name, String type, String ip, int port) {
+            onDevice(name, type, ip, port);
+        }
         void onFinished(int responses);
         void onError(String message);
     }
@@ -70,7 +74,7 @@ public final class LocalDiscovery {
                         if (!request.startsWith(DISCOVER_PREFIX)) continue;
                         String ip = getBestLocalIp();
                         if ("0.0.0.0".equals(ip)) continue;
-                        String reply = DEVICE_PREFIX + clean(nameProvider.getDeviceName()) + "|android|" + ip + "|5051";
+                        String reply = DEVICE_PREFIX + clean(nameProvider.getDeviceName()) + "|android|" + ip + "|5051|" + cleanId(nameProvider.getDeviceId());
                         byte[] data = reply.getBytes("UTF-8");
                         DatagramPacket answer = new DatagramPacket(data, data.length, packet.getAddress(), packet.getPort());
                         socket.send(answer);
@@ -141,9 +145,12 @@ public final class LocalDiscovery {
                         String ip = parts[3].trim();
                         int port = 5051;
                         try { port = Integer.parseInt(parts[4].trim()); } catch (Exception ignored) {}
-                        if (!isIpv4(ip) || !seen.add(ip + ":" + port)) continue;
+                        String deviceId = parts.length > 5 ? parts[5].trim() : "";
+                        String dedupeKey = deviceId.length() > 0 ? "id:" + deviceId : "ip:" + ip + ":" + port;
+                        if (!isIpv4(ip) || !seen.add(dedupeKey)) continue;
                         responses++;
-                        listener.onDevice(name.length() == 0 ? "جهاز " + ip : name,
+                        listener.onIdentifiedDevice(deviceId,
+                                name.length() == 0 ? "جهاز " + ip : name,
                                 type.length() == 0 ? "device" : type, ip, port);
                     }
                     listener.onFinished(responses);
@@ -169,6 +176,11 @@ public final class LocalDiscovery {
         if (value == null) return "Android";
         String cleaned = value.replace("|", " ").replace("\r", " ").replace("\n", " ").trim();
         return cleaned.length() > 80 ? cleaned.substring(0, 80) : (cleaned.length() == 0 ? "Android" : cleaned);
+    }
+
+    private static String cleanId(String value) {
+        if (value == null) return "";
+        return value.replace("|", "").replace("\r", "").replace("\n", "").trim();
     }
 
     private static String getSubnetBroadcast(String ip) {
