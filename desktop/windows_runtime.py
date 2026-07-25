@@ -89,11 +89,12 @@ def notify_existing(command: str, timeout: float = 1.5) -> bool:
 
 
 def enhance_windows_ui(app_module) -> None:
-    """Patch the existing Tkinter UI without replacing the application logic."""
+    """Patch the existing UI and web page without replacing transfer logic."""
 
     original_build = app_module.DesktopApp._build_ui
     original_start_server = app_module.DesktopApp._start_server
     original_periodic_refresh = app_module.DesktopApp._periodic_refresh
+    original_serve_file = app_module.TransferHandler._serve_file
 
     def refresh_ip(self) -> None:
         ip = app_module.local_ip()
@@ -166,6 +167,49 @@ def enhance_windows_ui(app_module) -> None:
         refresh_ip(self)
         original_periodic_refresh(self)
 
+    def serve_file(self, path, content_type=None, download_name=None) -> None:
+        if path.name.lower() != "index.html":
+            original_serve_file(self, path, content_type, download_name)
+            return
+        try:
+            html = path.read_text(encoding="utf-8")
+            marker = "svln-current-server-ip"
+            if marker not in html:
+                injection = r'''
+<script id="svln-current-server-ip">
+(async function(){
+  try {
+    const response = await fetch('/api/info', {cache:'no-store'});
+    const info = await response.json();
+    const hero = document.querySelector('.hero');
+    if (!hero) return;
+    const box = document.createElement('div');
+    box.style.cssText = 'margin-top:12px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);font-weight:800;direction:ltr;text-align:center;cursor:pointer';
+    box.textContent = 'Windows IP: ' + info.ip + ':' + info.port + '  •  اضغط للنسخ';
+    box.onclick = function(){
+      const value = info.ip + ':' + info.port;
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(value).catch(function(){});
+      const status = document.getElementById('status');
+      if (status) status.textContent = 'تم نسخ عنوان الكمبيوتر: ' + value;
+    };
+    hero.appendChild(box);
+  } catch (error) {}
+})();
+</script>
+'''
+                html = html.replace("</body>", injection + "</body>")
+            data = html.encode("utf-8")
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, max-age=0")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception:
+            original_serve_file(self, path, content_type, download_name)
+
     app_module.DesktopApp._build_ui = build_ui
     app_module.DesktopApp._start_server = start_server
     app_module.DesktopApp._periodic_refresh = periodic_refresh
+    app_module.TransferHandler._serve_file = serve_file
