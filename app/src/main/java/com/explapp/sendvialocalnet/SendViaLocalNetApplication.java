@@ -8,6 +8,7 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -52,7 +53,7 @@ public final class SendViaLocalNetApplication extends Application implements App
         background.setCornerRadius(dp(activity, 18));
         background.setStroke(dp(activity, 1), Color.rgb(199, 210, 254));
         chip.setBackground(background);
-        chip.setElevation(8f);
+        if (Build.VERSION.SDK_INT >= 21) chip.setElevation(8f);
         updateText(chip);
 
         chip.setOnClickListener(new View.OnClickListener() {
