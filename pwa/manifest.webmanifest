@@ -1,0 +1,13 @@
+{
+  "name": "نقل محلي Pro",
+  "short_name": "نقل محلي",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#3157d5",
+  "description": "إرسال ملفات محليًا إلى Android أو Windows داخل نفس الشبكة",
+  "icons": [
+    {"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}

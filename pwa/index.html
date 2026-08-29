@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#3157d5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="نقل محلي Pro">
+  <title>نقل محلي Pro</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <style>
+    :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#182033;background:#f4f6fb}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#eef2ff,#f7f8fc 38%,#fff);padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}main{max-width:620px;margin:0 auto;padding:28px 0}.hero{text-align:center;padding:18px 8px 24px}.logo{width:78px;height:78px;margin:auto;border-radius:22px;background:#3157d5;color:white;display:grid;place-items:center;font-size:35px;box-shadow:0 14px 35px #3157d53b}.hero h1{margin:14px 0 5px;font-size:28px}.hero p{margin:0;color:#657087}.card{background:#fff;border:1px solid #e3e7f1;border-radius:20px;padding:18px;margin:12px 0;box-shadow:0 8px 26px #25345a0d}.status{display:flex;gap:10px;align-items:center;font-weight:650}.dot{width:10px;height:10px;border-radius:50%;background:#18a66a}.hint{font-size:14px;color:#6b7488;line-height:1.7;margin-top:7px}label{display:block;font-size:14px;font-weight:650;margin-bottom:8px}input{width:100%;height:48px;border:1px solid #cfd6e6;border-radius:13px;padding:0 13px;font-size:17px;direction:ltr;text-align:left;outline:none;background:#fafbfe}input:focus{border-color:#3157d5;box-shadow:0 0 0 3px #3157d520}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}button{border:0;border-radius:13px;height:48px;font-size:16px;font-weight:700;cursor:pointer}.primary{background:#3157d5;color:#fff}.secondary{background:#edf1ff;color:#2748bc}.small{font-size:13px;color:#7a8397;margin-top:12px;line-height:1.65}.warning{background:#fff8e7;border-color:#f2dfaa}.warning b{color:#805c00}@media(max-width:420px){.buttons{grid-template-columns:1fr}.hero h1{font-size:25px}}
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero"><div class="logo">↔</div><h1>نقل محلي Pro</h1><p>بوابة ثابتة للإرسال إلى Android أو Windows داخل نفس الشبكة</p></section>
+  <section class="card"><div class="status"><span class="dot"></span> التطبيق جاهز</div><div class="hint">احفظ هذه الصفحة على الشاشة الرئيسية. افتح تطبيق نقل محلي على Android أو Windows، ثم أدخل عنوان IP للجهاز المستقبل مرة واحدة فقط.</div></section>
+  <section class="card">
+    <label for="host">عنوان الجهاز المستقبل (Android أو Windows)</label>
+    <input id="host" inputmode="decimal" autocomplete="off" placeholder="192.168.1.102">
+    <div class="buttons"><button class="primary" id="open">فتح الإرسال المحلي</button><button class="secondary" id="clear">مسح العنوان</button></div>
+    <div class="small">سيتم فتح <span dir="ltr">http://IP:5051</span>. يجب أن يكون تطبيق الاستقبال مفتوحًا على Android أو Windows وأن تكون الأجهزة على نفس Wi‑Fi.</div>
+  </section>
+  <section class="card warning"><b>بالنسبة للـ iPhone</b><div class="hint">يمكنك من هذه الـPWA الإرسال إلى Android أو Windows. أما لكي يستقبل iPhone الملفات مباشرة من Android أو Windows، استخدم تطبيق iPhone Native لأن Safari/PWA لا يستطيع فتح خادم استقبال محلي مستقل.</div></section>
+</main>
+<script>
+const key='svln.local.host'; const input=document.getElementById('host');
+input.value=localStorage.getItem(key)||'';
+function normalize(v){return v.trim().replace(/^https?:\/\//i,'').replace(/\/.*$/,'').replace(/:5051$/,'');}
+document.getElementById('open').onclick=()=>{const host=normalize(input.value);if(!host){input.focus();return;}localStorage.setItem(key,host);location.href=`http://${host}:5051/`;};
+document.getElementById('clear').onclick=()=>{localStorage.removeItem(key);input.value='';input.focus();};
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+</script>
+</body>
+</html>
