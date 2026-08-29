@@ -6,7 +6,7 @@ struct ContentView: View {
     @State private var showImporter = false
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             ScrollView {
                 VStack(spacing: 16) {
                     statusCard
@@ -18,7 +18,7 @@ struct ContentView: View {
             }
             .navigationTitle("نقل محلي Pro")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button { service.discover() } label: { Image(systemName: "arrow.clockwise") }
                 }
             }
@@ -29,6 +29,7 @@ struct ContentView: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
         .environment(\.layoutDirection, .rightToLeft)
     }
 
@@ -36,11 +37,11 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(service.receiverRunning ? "الاستقبال يعمل" : "الاستقبال متوقف", systemImage: service.receiverRunning ? "antenna.radiowaves.left.and.right" : "exclamationmark.triangle")
-                    .foregroundStyle(service.receiverRunning ? .green : .orange)
+                    .foregroundColor(service.receiverRunning ? .green : .orange)
                 Spacer()
                 Text(service.localIP).font(.caption.monospaced())
             }
-            Text(service.status).font(.subheadline).foregroundStyle(.secondary)
+            Text(service.status).font(.subheadline).foregroundColor(.secondary)
             if service.sending {
                 ProgressView(value: service.progress)
             }
@@ -57,22 +58,23 @@ struct ContentView: View {
             }
             if service.devices.isEmpty {
                 Text("افتح التطبيق على Android أو Windows أو iPhone آخر، وتأكد أن الأجهزة على نفس Wi‑Fi.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundColor(.secondary)
             } else {
                 ForEach(service.devices) { device in
                     Button { service.toggleDevice(device.id) } label: {
                         HStack(spacing: 12) {
                             Image(systemName: icon(for: device.type))
                                 .frame(width: 34, height: 34)
-                                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                                .background(Color.accentColor.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 9))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(device.name).fontWeight(.semibold)
                                 Text("\(device.ip):\(device.port) • \(device.type.uppercased())")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
                             Image(systemName: device.selected ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(device.selected ? Color.accentColor : .secondary)
+                                .foregroundColor(device.selected ? Color.accentColor : .secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -94,14 +96,14 @@ struct ContentView: View {
                 }
             }
             if service.pendingFiles.isEmpty {
-                Text("لم يتم اختيار ملفات بعد.").font(.subheadline).foregroundStyle(.secondary)
+                Text("لم يتم اختيار ملفات بعد.").font(.subheadline).foregroundColor(.secondary)
             } else {
                 ForEach(service.pendingFiles) { file in
                     HStack {
                         Image(systemName: "doc")
                         Text(file.name).lineLimit(1)
                         Spacer()
-                        Text(formatBytes(file.size)).font(.caption).foregroundStyle(.secondary)
+                        Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
                     }
                 }
                 Button { service.sendSelected() } label: {
@@ -120,16 +122,17 @@ struct ContentView: View {
             Text("الملفات المستلمة").font(.headline)
             if service.receivedFiles.isEmpty {
                 Text("ستظهر الملفات التي تصل إلى هذا iPhone هنا، وتُحفظ داخل Files > On My iPhone > نقل محلي Pro.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundColor(.secondary)
             } else {
                 ForEach(service.receivedFiles) { file in
                     HStack {
+                        Image(systemName: "tray.and.arrow.down.fill").foregroundColor(.green)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.name).lineLimit(1)
-                            Text(formatBytes(file.size)).font(.caption).foregroundStyle(.secondary)
+                            Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
                         }
                         Spacer()
-                        ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }
+                        Text("Files").font(.caption).foregroundColor(.secondary)
                     }
                     Divider()
                 }
@@ -157,7 +160,8 @@ private extension View {
         self
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(.background, in: RoundedRectangle(cornerRadius: 18))
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.secondary.opacity(0.15)))
     }
 }
