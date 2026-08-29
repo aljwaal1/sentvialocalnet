@@ -1,0 +1,50 @@
+name: Build iOS Native
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml
+
+      - name: Build unsigned iPhone app
+        run: |
+          xcodebuild \
+            -project ios/SendViaLocalNet.xcodeproj \
+            -scheme SendViaLocalNet \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Prepare unsigned IPA archive
+        run: |
+          mkdir -p build/Payload
+          cp -R build/ios/Build/Products/Release-iphoneos/SendViaLocalNet.app build/Payload/
+          cd build
+          zip -r SendViaLocalNet-iOS-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SendViaLocalNet-iOS-unsigned
+          path: build/SendViaLocalNet-iOS-unsigned.ipa
+          if-no-files-found: error
