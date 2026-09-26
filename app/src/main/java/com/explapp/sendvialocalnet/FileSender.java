@@ -8,6 +8,7 @@ import android.os.Build;
 import android.provider.OpenableColumns;
 
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -22,9 +23,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.json.JSONObject;
+
 final class FileSender {
     private static final int PORT = 5051;
     private static final int BUFFER_SIZE = 64 * 1024;
+    private static final long RESUME_CHUNK_SIZE = 50L * 1024L * 1024L;
 
     interface Listener {
         void onProgress(int completed, int total, int succeeded, int failed);
@@ -54,6 +58,11 @@ final class FileSender {
         Uri uri;
         File temporary;
         String relativePath;
+    }
+
+    private static class ResumeState {
+        long offset;
+        boolean completed;
     }
 
     private final Context context;
@@ -145,6 +154,10 @@ final class FileSender {
 
             info = prepare(uri);
             listener.onLog("جاري إرسال " + info.name + " إلى " + device.name);
+
+            Boolean resumed = sendResumable(device, item, info, listener);
+            if (resumed != null) return resumed.booleanValue();
+
             connection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(120000);
@@ -180,6 +193,153 @@ final class FileSender {
         } finally {
             if (connection != null) connection.disconnect();
             if (info != null && info.temporary != null) info.temporary.delete();
+        }
+    }
+
+    private ResumeState getResumeState(DeviceRecord device, SendItem item, FileInfo info) {
+        HttpURLConnection connection = null;
+        try {
+            StringBuilder url = new StringBuilder("http://").append(device.ip).append(":").append(PORT)
+                    .append("/api/resume-status?filename=").append(URLEncoder.encode(info.name, "UTF-8"))
+                    .append("&size=").append(info.size);
+            if (item.relativePath != null && item.relativePath.length() > 0) {
+                url.append("&relative=").append(URLEncoder.encode(item.relativePath, "UTF-8"));
+            }
+            connection = (HttpURLConnection)new URL(url.toString()).openConnection();
+            connection.setConnectTimeout(7000);
+            connection.setReadTimeout(7000);
+            connection.setRequestMethod("GET");
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) return null;
+            InputStream input = connection.getInputStream();
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            input.close();
+            JSONObject json = new JSONObject(new String(output.toByteArray(), "UTF-8"));
+            if (!json.optBoolean("ok", false)) return null;
+            ResumeState state = new ResumeState();
+            state.offset = Math.max(0L, Math.min(info.size, json.optLong("offset", 0L)));
+            state.completed = json.optBoolean("completed", false);
+            return state;
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private Boolean sendResumable(DeviceRecord device, SendItem item, FileInfo info, Listener listener) {
+        ResumeState state = getResumeState(device, item, info);
+        if (state == null) return null;
+        if (state.completed) {
+            listener.onLog(info.name + " موجود كاملًا على " + device.name + " — تم التخطي");
+            return Boolean.TRUE;
+        }
+
+        long offset = state.offset;
+        while (offset < info.size) {
+            long sendLength = Math.min(RESUME_CHUNK_SIZE, info.size - offset);
+            boolean sent = false;
+
+            for (int attempt = 0; attempt < 3 && !sent; attempt++) {
+                HttpURLConnection connection = null;
+                InputStream input = null;
+                OutputStream output = null;
+                try {
+                    connection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
+                    connection.setConnectTimeout(12000);
+                    connection.setReadTimeout(120000);
+                    connection.setDoOutput(true);
+                    connection.setRequestMethod("POST");
+                    connection.setRequestProperty("Content-Type", "application/octet-stream");
+                    connection.setRequestProperty("X-File-Name", URLEncoder.encode(info.name, "UTF-8"));
+                    connection.setRequestProperty("X-File-Size", String.valueOf(info.size));
+                    connection.setRequestProperty("X-Transfer-Offset", String.valueOf(offset));
+                    connection.setRequestProperty("X-Conflict-Policy", "skip");
+                    if (item.relativePath != null && item.relativePath.length() > 0) {
+                        connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
+                    }
+                    if (Build.VERSION.SDK_INT >= 19) connection.setFixedLengthStreamingMode(sendLength);
+                    else if (sendLength <= Integer.MAX_VALUE) connection.setFixedLengthStreamingMode((int)sendLength);
+                    else throw new Exception("جزء الإرسال أكبر من الحد المدعوم");
+
+                    input = info.temporary != null ? new FileInputStream(info.temporary) : resolver.openInputStream(info.uri);
+                    if (input == null) throw new Exception("تعذر فتح الملف");
+                    skipFully(input, offset);
+
+                    output = new BufferedOutputStream(connection.getOutputStream());
+                    byte[] buffer = new byte[BUFFER_SIZE];
+                    long remaining = sendLength;
+                    while (remaining > 0) {
+                        int wanted = (int)Math.min(buffer.length, remaining);
+                        int count = input.read(buffer, 0, wanted);
+                        if (count < 0) throw new Exception("انتهى الملف قبل اكتمال الجزء");
+                        output.write(buffer, 0, count);
+                        remaining -= count;
+                    }
+                    output.flush();
+                    output.close();
+                    output = null;
+                    input.close();
+                    input = null;
+
+                    int code = connection.getResponseCode();
+                    if (code >= 200 && code < 300) sent = true;
+                } catch (Exception ignored) {
+                } finally {
+                    try { if (input != null) input.close(); } catch (Exception ignored) {}
+                    try { if (output != null) output.close(); } catch (Exception ignored) {}
+                    if (connection != null) connection.disconnect();
+                }
+
+                ResumeState refreshed = getResumeState(device, item, info);
+                if (refreshed != null) {
+                    if (refreshed.completed) {
+                        listener.onLog("تم إرسال " + info.name + " إلى " + device.name);
+                        return Boolean.TRUE;
+                    }
+                    if (refreshed.offset != offset) {
+                        offset = refreshed.offset;
+                        sent = true;
+                    }
+                }
+            }
+
+            if (!sent) {
+                listener.onLog("فشل استكمال " + info.name + " إلى " + device.name);
+                return Boolean.FALSE;
+            }
+
+            ResumeState refreshed = getResumeState(device, item, info);
+            if (refreshed != null) {
+                if (refreshed.completed) {
+                    listener.onLog("تم إرسال " + info.name + " إلى " + device.name);
+                    return Boolean.TRUE;
+                }
+                offset = refreshed.offset;
+            } else {
+                offset += sendLength;
+            }
+        }
+
+        ResumeState end = getResumeState(device, item, info);
+        boolean ok = end != null && end.completed;
+        listener.onLog((ok ? "تم إرسال " : "تعذر إنهاء ") + info.name + " إلى " + device.name);
+        return Boolean.valueOf(ok);
+    }
+
+    private void skipFully(InputStream input, long amount) throws Exception {
+        long remaining = amount;
+        while (remaining > 0) {
+            long skipped = input.skip(remaining);
+            if (skipped > 0) {
+                remaining -= skipped;
+                continue;
+            }
+            if (input.read() < 0) throw new Exception("تعذر الوصول إلى موضع الاستكمال");
+            remaining--;
         }
     }
 
