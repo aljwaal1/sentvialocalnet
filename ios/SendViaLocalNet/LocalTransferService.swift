@@ -20,6 +20,15 @@ struct PendingFile: Identifiable, Hashable {
     let size: Int64
     let relativePath: String?
     let isDirectory: Bool
+    let rootFolderId: String?
+}
+
+struct SelectedFolder: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let url: URL
+    var selected: Bool
+    let itemCount: Int
 }
 
 struct ReceivedFile: Identifiable, Hashable {
@@ -33,6 +42,7 @@ struct ReceivedFile: Identifiable, Hashable {
 final class LocalTransferService: ObservableObject {
     @Published var devices: [LocalDevice] = []
     @Published var pendingFiles: [PendingFile] = []
+    @Published var selectedFolders: [SelectedFolder] = []
     @Published var receivedFiles: [ReceivedFile] = []
     @Published var status = "جاهز"
     @Published var localIP = "0.0.0.0"
@@ -106,6 +116,7 @@ final class LocalTransferService: ObservableObject {
             try? FileManager.default.removeItem(at: item.url)
         }
         pendingFiles.removeAll()
+        selectedFolders.removeAll()
         progress = 0
     }
 
@@ -120,7 +131,7 @@ final class LocalTransferService: ObservableObject {
                 let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: name)
                 try FileManager.default.copyItem(at: source, to: target)
                 let values = try target.resourceValues(forKeys: [.fileSizeKey])
-                prepared.append(PendingFile(url: target, name: name, size: Int64(values.fileSize ?? 0), relativePath: nil, isDirectory: false))
+                prepared.append(PendingFile(url: target, name: name, size: Int64(values.fileSize ?? 0), relativePath: nil, isDirectory: false, rootFolderId: nil))
             } catch {
                 status = "تعذر تجهيز ملف: \(source.lastPathComponent)"
             }
@@ -130,20 +141,18 @@ final class LocalTransferService: ObservableObject {
     }
 
     func addFolder(_ folderURL: URL) {
-        var prepared = pendingFiles
         let scoped = folderURL.startAccessingSecurityScopedResource()
         defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
 
         let rootName = Self.safeFileName(folderURL.lastPathComponent)
-        let rootKey = rootName.lowercased()
-
-        // Avoid adding the same root folder twice.
-        if prepared.contains(where: { $0.isDirectory && ($0.relativePath ?? "").lowercased() == rootKey }) {
+        if selectedFolders.contains(where: { $0.name.caseInsensitiveCompare(rootName) == .orderedSame && $0.url == folderURL }) {
             status = "هذا المجلد مضاف بالفعل: \(rootName)"
             return
         }
 
-        prepared.append(PendingFile(url: folderURL, name: rootName, size: 0, relativePath: rootName, isDirectory: true))
+        let rootId = UUID().uuidString.lowercased()
+        var newItems: [PendingFile] = []
+        newItems.append(PendingFile(url: folderURL, name: rootName, size: 0, relativePath: rootName, isDirectory: true, rootFolderId: rootId))
 
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
         guard let enumerator = FileManager.default.enumerator(
@@ -163,7 +172,7 @@ final class LocalTransferService: ObservableObject {
                 let name = Self.safeFileName(source.lastPathComponent)
 
                 if values.isDirectory == true {
-                    prepared.append(PendingFile(url: source, name: name, size: 0, relativePath: relativePath, isDirectory: true))
+                    newItems.append(PendingFile(url: source, name: name, size: 0, relativePath: relativePath, isDirectory: true, rootFolderId: rootId))
                     continue
                 }
 
@@ -171,16 +180,30 @@ final class LocalTransferService: ObservableObject {
                 let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
                 try FileManager.default.copyItem(at: source, to: target)
                 let copied = try target.resourceValues(forKeys: [.fileSizeKey])
-                prepared.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath, isDirectory: false))
+                newItems.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath, isDirectory: false, rootFolderId: rootId))
             } catch {
                 status = "تعذر تجهيز عنصر: \(source.lastPathComponent)"
             }
         }
 
-        pendingFiles = prepared
-        let dirs = prepared.filter { $0.isDirectory }.count
-        let files = prepared.count - dirs
-        status = "تمت إضافة \(rootName) • المجموع: \(files) ملف و\(dirs) مجلد"
+        pendingFiles.append(contentsOf: newItems)
+        selectedFolders.append(SelectedFolder(id: rootId, name: rootName, url: folderURL, selected: true, itemCount: newItems.count))
+        status = "تمت إضافة \(rootName) • \(newItems.count) عنصر"
+    }
+
+    func toggleFolder(_ id: String) {
+        guard let index = selectedFolders.firstIndex(where: { $0.id == id }) else { return }
+        selectedFolders[index].selected.toggle()
+    }
+
+    func removeFolder(_ id: String) {
+        let removedItems = pendingFiles.filter { $0.rootFolderId == id }
+        for item in removedItems where item.url.path.hasPrefix(FileManager.default.temporaryDirectory.path) {
+            try? FileManager.default.removeItem(at: item.url)
+        }
+        pendingFiles.removeAll { $0.rootFolderId == id }
+        selectedFolders.removeAll { $0.id == id }
+        status = "تم حذف المجلد من قائمة الإرسال"
     }
 
     func prepareFolders(_ folderURLs: [URL]) {
@@ -225,7 +248,15 @@ final class LocalTransferService: ObservableObject {
         guard !sending else { return }
         sending = true
         progress = 0
-        let files = pendingFiles
+        let enabledFolderIds = Set(selectedFolders.filter { $0.selected }.map(\.id))
+        let files = pendingFiles.filter { item in
+            guard let rootId = item.rootFolderId else { return true }
+            return enabledFolderIds.contains(rootId)
+        }
+        guard !files.isEmpty else {
+            status = "حدد مجلدًا واحدًا على الأقل أو اختر ملفات"
+            return
+        }
         Task { [weak self] in
             guard let self = self else { return }
             var completed = 0
