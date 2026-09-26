@@ -364,9 +364,10 @@ public class StableMainActivity extends Activity {
             Set<String> seen = new LinkedHashSet<String>();
             for (FileSender.SendItem item : files) seen.add(item.uri.toString() + "|" + item.relativePath);
             int before = files.size();
+            addDirectoryItem(tree, rootName, seen);
             addTreeRecursive(tree, DocumentsContract.getTreeDocumentId(tree), rootName, seen);
             renderFiles();
-            toast("تمت إضافة المجلد: " + rootName + " (" + (files.size() - before) + " ملف)");
+            toast("تمت إضافة المجلد: " + rootName + " (" + (files.size() - before) + " عنصر)");
         }
     }
 
@@ -401,7 +402,9 @@ public class StableMainActivity extends Activity {
                 if (documentId == null) continue;
                 Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
-                    addTreeRecursive(treeUri, documentId, relativeDir + "/" + safePathPart(name), seen);
+                    String childPath = relativeDir + "/" + safePathPart(name);
+                    addDirectoryItem(documentUri, childPath, seen);
+                    addTreeRecursive(treeUri, documentId, childPath, seen);
                 } else {
                     addFileUri(documentUri, relativeDir + "/" + safePathPart(name), seen);
                 }
@@ -410,6 +413,12 @@ public class StableMainActivity extends Activity {
         } finally {
             if (cursor != null) cursor.close();
         }
+    }
+
+    private void addDirectoryItem(Uri uri, String relativePath, Set<String> seen) {
+        String key = "dir|" + relativePath;
+        if (!seen.add(key)) return;
+        files.add(new FileSender.SendItem(uri, relativePath, true));
     }
 
     private String queryDisplayName(Uri uri) {
@@ -434,9 +443,11 @@ public class StableMainActivity extends Activity {
         if (files.isEmpty()) {
             fileSummary.setText("لم يتم اختيار ملفات أو مجلدات");
         } else {
-            int folderFiles = 0;
-            for (FileSender.SendItem item : files) if (item.relativePath != null && item.relativePath.length() > 0) folderFiles++;
-            fileSummary.setText("الإجمالي: " + files.size() + " ملف" + (folderFiles > 0 ? " • من مجلدات: " + folderFiles : ""));
+            int directories = 0, regularFiles = 0;
+            for (FileSender.SendItem item : files) {
+                if (item.directory) directories++; else regularFiles++;
+            }
+            fileSummary.setText("ملفات: " + regularFiles + " • مجلدات: " + directories);
         }
         int selected = 0;
         synchronized (devices) { for (DeviceRecord d : devices) if (d.selected) selected++; }
