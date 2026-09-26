@@ -55,23 +55,34 @@ def downloads_dir() -> Path:
     return path
 
 
+WINDOWS_INVALID_CHARS = set('\\/:*?"<>|')
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
 def safe_filename(name: str) -> str:
-    value = (name or f"file_{int(time.time())}.bin").strip()
-    for char in '\\/:*?"<>|':
-        value = value.replace(char, "_")
-    return value[:220] or f"file_{int(time.time())}.bin"
+    """Return the original component unchanged when it is valid on Windows.
+    Never silently rename transferred files/folders.
+    """
+    value = str(name or "")
+    if not value or value in (".", ".."):
+        raise ValueError("اسم ملف/مجلد غير صالح")
+    if any(ch in WINDOWS_INVALID_CHARS or ord(ch) < 32 for ch in value):
+        raise ValueError(f"Windows لا يقبل الاسم كما هو: {value}")
+    if value.endswith((" ", ".")):
+        raise ValueError(f"Windows لا يقبل اسمًا ينتهي بمسافة أو نقطة: {value}")
+    stem = value.split(".", 1)[0].upper()
+    if stem in WINDOWS_RESERVED_NAMES:
+        raise ValueError(f"Windows لا يقبل الاسم المحجوز: {value}")
+    return value
 
 
 def unique_path(directory: Path, name: str) -> Path:
-    target = directory / safe_filename(name)
-    if not target.exists():
-        return target
-    stem, suffix = target.stem, target.suffix
-    index = 2
-    while target.exists():
-        target = directory / f"{stem} ({index}){suffix}"
-        index += 1
-    return target
+    # Compatibility helper: preserve the exact name; conflict handling is explicit.
+    return directory / safe_filename(name)
 
 
 def format_size(size: int) -> str:
@@ -178,7 +189,7 @@ class PersistentStore:
         with self.lock:
             self.transfers[transfer_id] = {
                 "id": transfer_id,
-                "filename": safe_filename(original_name or source.name),
+                "filename": str(original_name or source.name),
                 "path": str(target),
                 "size": target.stat().st_size,
                 "sender_name": sender_name,
@@ -203,7 +214,7 @@ class PersistentStore:
         with self.lock:
             self.transfers[transfer_id] = {
                 "id": transfer_id,
-                "filename": safe_filename(filename),
+                "filename": str(filename),
                 "path": str(target),
                 "size": size,
                 "sender_name": sender_name,
@@ -312,7 +323,7 @@ class TransferHandler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy")
 
     def _json(self, value: Any, status: int = 200) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -428,43 +439,78 @@ class TransferHandler(BaseHTTPRequestHandler):
         if length < 0:
             self._json({"ok": False, "error": "حجم الملف غير معروف"}, 411)
             return
+
         raw_name = self.headers.get("X-File-Name", "")
         filename = urllib.parse.unquote(raw_name) if raw_name else f"received_{int(time.time())}.bin"
         raw_relative = self.headers.get("X-Relative-Path", "")
         relative = urllib.parse.unquote(raw_relative) if raw_relative else ""
         entry_type = (self.headers.get("X-Entry-Type", "file") or "file").strip().lower()
+        conflict = (self.headers.get("X-Conflict-Policy", "skip") or "skip").strip().lower()
+        if conflict not in ("skip", "overwrite", "cancel"):
+            conflict = "skip"
+
         base_dir = downloads_dir()
 
-        if entry_type == "directory":
-            parts = [safe_filename(part) for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
-            target_dir = base_dir.joinpath(*parts) if parts else base_dir / safe_filename(filename)
-            try:
+        try:
+            if entry_type == "directory":
+                raw_parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+                parts = [safe_filename(part) for part in raw_parts]
+                target_dir = base_dir.joinpath(*parts) if parts else base_dir / safe_filename(filename)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 self.state.event_queue.put(("log", f"تم إنشاء المجلد {target_dir}"))
                 self._json({"ok": True, "directory": str(target_dir)})
-            except Exception as exc:
-                self._json({"ok": False, "error": str(exc)}, 500)
-            return
-        if relative:
-            parts = [safe_filename(part) for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
-            if len(parts) > 1:
-                base_dir = base_dir.joinpath(*parts[:-1])
-                base_dir.mkdir(parents=True, exist_ok=True)
-                filename = parts[-1]
-        target = unique_path(base_dir, filename)
-        remaining = length
-        try:
-            with target.open("wb") as output:
+                return
+
+            if relative:
+                raw_parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+                parts = [safe_filename(part) for part in raw_parts]
+                if len(parts) > 1:
+                    base_dir = base_dir.joinpath(*parts[:-1])
+                    base_dir.mkdir(parents=True, exist_ok=True)
+                    filename = parts[-1]
+                elif len(parts) == 1:
+                    filename = parts[0]
+
+            filename = safe_filename(filename)
+            target = base_dir / filename
+
+            if target.exists():
+                if conflict == "skip":
+                    # Consume request body so the connection closes cleanly.
+                    remaining = length
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(BUFFER_SIZE, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                    self._json({"ok": True, "skipped": True, "filename": target.name, "reason": "exists"})
+                    return
+                if conflict == "cancel":
+                    self._json({"ok": False, "error": "الملف موجود مسبقًا", "filename": target.name}, 409)
+                    return
+                # overwrite: keep exact same name and replace only after complete receive.
+
+            temp = target.with_name(target.name + ".svln.part")
+            remaining = length
+            with temp.open("wb") as output:
                 while remaining > 0:
                     chunk = self.rfile.read(min(BUFFER_SIZE, remaining))
                     if not chunk:
                         raise IOError("انقطع الإرسال")
                     output.write(chunk)
                     remaining -= len(chunk)
+            if target.exists():
+                target.unlink()
+            temp.replace(target)
             self.state.event_queue.put(("received", str(target)))
             self._json({"ok": True, "filename": target.name, "size": length})
+        except ValueError as exc:
+            self._json({"ok": False, "error": str(exc), "code": "INVALID_NAME"}, 422)
         except Exception as exc:
-            target.unlink(missing_ok=True)
+            try:
+                temp.unlink(missing_ok=True)
+            except Exception:
+                pass
             self._json({"ok": False, "error": str(exc)}, 500)
 
     def _handle_hub_upload(self, parsed: urllib.parse.ParseResult) -> None:
@@ -758,7 +804,7 @@ class DesktopApp:
         added = 0
         added_dirs = 0
 
-        root_rel = safe_filename(root.name)
+        root_rel = root.name
         if root_rel not in known_dirs:
             self.folder_entries.append(root_rel)
             known_dirs.add(root_rel)
@@ -767,9 +813,9 @@ class DesktopApp:
         for path in root.rglob("*"):
             try:
                 relative = Path(root.name) / path.relative_to(root)
-                relative_text = "/".join(safe_filename(part) for part in relative.parts)
+                relative_text = "/".join(relative.parts)
             except Exception:
-                relative_text = f"{safe_filename(root.name)}/{safe_filename(path.name)}"
+                relative_text = f"{root.name}/{path.name}"
 
             if path.is_dir():
                 if relative_text not in known_dirs:
@@ -943,6 +989,7 @@ class DesktopApp:
             "X-File-Name": urllib.parse.quote(Path(relative).name or "folder"),
             "X-File-Size": "0",
             "X-Relative-Path": urllib.parse.quote(relative),
+            "X-Conflict-Policy": "skip",
             "X-Entry-Type": "directory",
         }
         try:
@@ -964,6 +1011,7 @@ class DesktopApp:
             "Content-Length": str(size),
             "X-File-Name": urllib.parse.quote(path.name),
             "X-File-Size": str(size),
+            "X-Conflict-Policy": "skip",
         }
         relative = self.file_relative_paths.get(str(path), "")
         if relative:
