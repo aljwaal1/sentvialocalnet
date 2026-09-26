@@ -111,7 +111,7 @@ struct ContentView: View {
             } else {
                 ForEach(service.pendingFiles) { file in
                     HStack {
-                        Image(systemName: file.relativePath == nil ? "doc" : "folder")
+                        Image(systemName: file.isDirectory ? "folder.fill" : "doc")
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.name).lineLimit(1)
                             if let path = file.relativePath {
@@ -119,7 +119,7 @@ struct ContentView: View {
                             }
                         }
                         Spacer()
-                        Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
+                        Text(file.isDirectory ? "مجلد" : formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
                     }
                 }
                 Button { service.sendSelected() } label: {
