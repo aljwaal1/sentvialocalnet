@@ -188,7 +188,8 @@ final class TransferReceiver {
             listener.onReceived(target);
             listener.onLog("تم استقبال " + target.getName());
         } catch (Exception error) {
-            if (target != null && target.exists()) target.delete();
+            // Never delete the destination here: it may be a pre-existing user file.
+            // Partial transfers use a separate .svln.part file.
             try { writeResponse(socket, "500 ERROR", message(error)); } catch (Exception ignored) {}
             listener.onLog("فشل الاستقبال: " + message(error));
         } finally {
