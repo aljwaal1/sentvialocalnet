@@ -49,6 +49,7 @@ struct ContentView: View {
                 Spacer()
                 Text(service.localIP).font(.caption.monospaced())
             }
+            Text("إرسال ⇄ استقبال باتجاهين").font(.caption).fontWeight(.semibold)
             Text(service.status).font(.subheadline).foregroundColor(.secondary)
             if service.sending {
                 ProgressView(value: service.progress)
@@ -134,7 +135,7 @@ struct ContentView: View {
 
     private var receivedCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("الملفات المستلمة").font(.headline)
+            Text("الاستقبال من Windows / Android / iPhone").font(.headline)
             if service.receivedFiles.isEmpty {
                 Text("ستظهر الملفات التي تصل إلى هذا iPhone هنا، وتُحفظ داخل Files > On My iPhone > نقل محلي Pro.")
                     .font(.subheadline).foregroundColor(.secondary)
