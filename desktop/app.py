@@ -31,6 +31,7 @@ except Exception:
 
 APP_NAME = "SendViaLocalNet"
 DISPLAY_NAME = "نقل محلي Pro"
+APP_VERSION = "2.1.2"
 PORT = 5051
 BUFFER_SIZE = 1024 * 256
 CLIENT_TIMEOUT = 35
@@ -311,7 +312,7 @@ class HubState:
 
 
 class TransferHandler(BaseHTTPRequestHandler):
-    server_version = "SendViaLocalNet/2.0"
+    server_version = f"SendViaLocalNet/{APP_VERSION}"
 
     @property
     def state(self) -> HubState:
@@ -390,7 +391,7 @@ class TransferHandler(BaseHTTPRequestHandler):
                 "name": self.state.store.get_device_name(),
                 "ip": local_ip(),
                 "port": PORT,
-                "version": "2.0.0",
+                "version": APP_VERSION,
             })
         elif path == "/api/devices":
             current_id = query.get("current_id", [""])[0]
@@ -646,7 +647,10 @@ class DesktopApp:
         hero.pack(fill="x", pady=(0, 14))
         left = tk.Frame(hero, bg="#4338CA")
         left.pack(side="left", fill="both", expand=True)
-        ttk.Label(left, text="نقل محلي Pro", style="Hero.TLabel").pack(anchor="w")
+        title_row = tk.Frame(left, bg="#4338CA")
+        title_row.pack(fill="x")
+        ttk.Label(title_row, text="نقل محلي Pro", style="Hero.TLabel").pack(side="left", anchor="w")
+        tk.Label(title_row, text=f"v{APP_VERSION}", bg="#4338CA", fg="#E0E7FF", font=("Segoe UI", 10, "bold")).pack(side="right")
         ttk.Label(left, text="إرسال واستقبال بين Windows وAndroid وiPhone داخل الشبكة المحلية", style="HeroSub.TLabel").pack(anchor="w", pady=(3, 10))
         self.url_var = tk.StringVar(value="جاري تشغيل الاستقبال...")
         tk.Label(left, textvariable=self.url_var, bg="#4338CA", fg="white", font=("Segoe UI", 11, "bold")).pack(anchor="w")
