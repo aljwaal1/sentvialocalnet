@@ -111,6 +111,19 @@ struct ContentView: View {
     private var filesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("الإرسال").font(.headline)
+
+            Picker("طريقة الإرسال", selection: $service.transferMode) {
+                Text("نسخ").tag("copy")
+                Text("نقل").tag("move")
+            }
+            .pickerStyle(.segmented)
+
+            if service.transferMode == "move" {
+                Text("النقل يحذف الأصل فقط بعد نجاح الإرسال إلى كل الأجهزة المحددة. إذا تعذر الحذف، يبقى الأصل كما هو.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+
             HStack {
                 Button { showImporter = true } label: { Label("ملف / ملفات", systemImage: "doc.badge.plus") }
                     .buttonStyle(.borderedProminent)
@@ -172,7 +185,7 @@ struct ContentView: View {
                 }
 
                 Button { service.sendSelected() } label: {
-                    Label(service.sending ? "جاري الإرسال…" : "إرسال إلى الأجهزة المحددة", systemImage: "paperplane.fill")
+                    Label(service.sending ? "جاري الإرسال…" : (service.transferMode == "move" ? "نقل إلى الأجهزة المحددة" : "نسخ إلى الأجهزة المحددة"), systemImage: service.transferMode == "move" ? "arrow.right.doc.on.clipboard" : "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
