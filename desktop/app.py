@@ -312,7 +312,7 @@ class TransferHandler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type")
 
     def _json(self, value: Any, status: int = 200) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -432,7 +432,19 @@ class TransferHandler(BaseHTTPRequestHandler):
         filename = urllib.parse.unquote(raw_name) if raw_name else f"received_{int(time.time())}.bin"
         raw_relative = self.headers.get("X-Relative-Path", "")
         relative = urllib.parse.unquote(raw_relative) if raw_relative else ""
+        entry_type = (self.headers.get("X-Entry-Type", "file") or "file").strip().lower()
         base_dir = downloads_dir()
+
+        if entry_type == "directory":
+            parts = [safe_filename(part) for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+            target_dir = base_dir.joinpath(*parts) if parts else base_dir / safe_filename(filename)
+            try:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                self.state.event_queue.put(("log", f"تم إنشاء المجلد {target_dir}"))
+                self._json({"ok": True, "directory": str(target_dir)})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
         if relative:
             parts = [safe_filename(part) for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
             if len(parts) > 1:
@@ -495,6 +507,7 @@ class DesktopApp:
         self.devices = self.store.get_devices()
         self.files: List[Path] = []
         self.file_relative_paths: Dict[str, str] = {}
+        self.folder_entries: List[str] = []
         self.direct_selected: Set[str] = {item.ip for item in self.devices if item.selected}
         self.web_selected: Set[str] = set()
         self.qr_photo = None
@@ -741,8 +754,29 @@ class DesktopApp:
             return
         root = Path(selected)
         known = {str(item) for item in self.files}
+        known_dirs = set(self.folder_entries)
         added = 0
+        added_dirs = 0
+
+        root_rel = safe_filename(root.name)
+        if root_rel not in known_dirs:
+            self.folder_entries.append(root_rel)
+            known_dirs.add(root_rel)
+            added_dirs += 1
+
         for path in root.rglob("*"):
+            try:
+                relative = Path(root.name) / path.relative_to(root)
+                relative_text = "/".join(safe_filename(part) for part in relative.parts)
+            except Exception:
+                relative_text = f"{safe_filename(root.name)}/{safe_filename(path.name)}"
+
+            if path.is_dir():
+                if relative_text not in known_dirs:
+                    self.folder_entries.append(relative_text)
+                    known_dirs.add(relative_text)
+                    added_dirs += 1
+                continue
             if not path.is_file():
                 continue
             key = str(path)
@@ -750,21 +784,21 @@ class DesktopApp:
                 self.files.append(path)
                 known.add(key)
                 added += 1
-            try:
-                relative = Path(root.name) / path.relative_to(root)
-                self.file_relative_paths[key] = relative.as_posix()
-            except Exception:
-                self.file_relative_paths[key] = f"{root.name}/{path.name}"
-        self.status_var.set(f"تمت إضافة مجلد {root.name}: {added} ملف. يمكنك إضافة مجلد آخر.")
+            self.file_relative_paths[key] = relative_text
+
+        self.status_var.set(f"تمت إضافة {root.name}: {added} ملف و{added_dirs} مجلد. يمكنك إضافة مجلد آخر.")
         self._render_files()
 
     def _clear_files(self) -> None:
         self.files.clear()
         self.file_relative_paths.clear()
+        self.folder_entries.clear()
         self._render_files()
 
     def _render_files(self) -> None:
         self.file_list.delete(0, "end")
+        for folder in self.folder_entries:
+            self.file_list.insert("end", f"📁 {folder}")
         for path in self.files:
             try:
                 relative = self.file_relative_paths.get(str(path), "")
@@ -870,14 +904,18 @@ class DesktopApp:
         if not files:
             messagebox.showwarning(DISPLAY_NAME, "اختر ملفًا واحدًا على الأقل")
             return
-        total = len(files) * (len(direct) + len(web_ids))
+        entries_per_target = len(files) + len(self.folder_entries)
+        total = entries_per_target * (len(direct) + len(web_ids))
         self.progress["value"] = 0
         self.status_var.set(f"بدء {total} عملية إرسال...")
-        self.executor.submit(self._send_worker, files, direct, web_ids, total)
+        self.executor.submit(self._send_worker, files, list(self.folder_entries), direct, web_ids, total)
 
-    def _send_worker(self, files: List[Path], direct: List[DirectDevice], web_ids: List[str], total: int) -> None:
+    def _send_worker(self, files: List[Path], folders: List[str], direct: List[DirectDevice], web_ids: List[str], total: int) -> None:
         jobs = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            for folder in folders:
+                for device in direct:
+                    jobs.append(pool.submit(self._send_directory, folder, device))
             for path in files:
                 for device in direct:
                     jobs.append(pool.submit(self._send_direct, path, device))
@@ -896,6 +934,27 @@ class DesktopApp:
                 completed += 1
                 self.events.put(("send_progress", (completed, total, ok, failed, message)))
         self.events.put(("send_done", (ok, failed)))
+
+    def _send_directory(self, relative: str, device: DirectDevice) -> Tuple[bool, str]:
+        connection = http.client.HTTPConnection(device.ip, PORT, timeout=30)
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": "0",
+            "X-File-Name": urllib.parse.quote(Path(relative).name or "folder"),
+            "X-File-Size": "0",
+            "X-Relative-Path": urllib.parse.quote(relative),
+            "X-Entry-Type": "directory",
+        }
+        try:
+            connection.request("POST", "/upload", body=b"", headers=headers)
+            response = connection.getresponse()
+            response.read()
+            success = 200 <= response.status < 300
+            return success, (f"تم إنشاء المجلد {relative} على {device.name}" if success else f"فشل المجلد {relative}: HTTP {response.status}")
+        except Exception as exc:
+            return False, f"فشل المجلد {relative} إلى {device.name}: {exc}"
+        finally:
+            connection.close()
 
     def _send_direct(self, path: Path, device: DirectDevice) -> Tuple[bool, str]:
         connection = http.client.HTTPConnection(device.ip, PORT, timeout=120)
