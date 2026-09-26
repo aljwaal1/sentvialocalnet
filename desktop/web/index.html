@@ -29,8 +29,41 @@
 </section></div></div><div id="toast" class="toast"></div>
 <script>
 const ID_KEY='svln_web_id',NAME_KEY='svln_web_name',TYPE_KEY='svln_web_type',DIRECT_KEY='svln_direct_devices';let myId=localStorage.getItem(ID_KEY)||('web-'+Date.now()+'-'+Math.random().toString(16).slice(2));let files=[],hubDevices=[],directDevices=[],selected=new Set(['windows']);localStorage.setItem(ID_KEY,myId);const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':b<1073741824?(b/1048576).toFixed(1)+' MB':(b/1073741824).toFixed(1)+' GB';function icon(t){return({iphone:'🍎',android:'🤖',laptop:'💻',web:'🌐',windows:'🖥️'})[t]||'📡'}function toast(t){$('toast').textContent=t;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),2200)}function loadLocal(){try{directDevices=JSON.parse(localStorage.getItem(DIRECT_KEY)||'[]')}catch{directDevices=[]}$('myName').value=localStorage.getItem(NAME_KEY)||((/iPhone|iPad/i.test(navigator.userAgent))?'آيفون جديد':'جهاز ويب');$('myType').value=localStorage.getItem(TYPE_KEY)||((/iPhone|iPad/i.test(navigator.userAgent))?'iphone':'web')}async function register(){const name=$('myName').value.trim()||'جهاز ويب',type=$('myType').value;localStorage.setItem(NAME_KEY,name);localStorage.setItem(TYPE_KEY,type);try{await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,name,type})});$('onlineState').textContent='● متصل';$('onlineState').style.background='#ecfdf3';await loadHubDevices()}catch{$('onlineState').textContent='● غير متصل';$('onlineState').style.background='#fef3f2'}}function saveIdentity(){register();toast('تم حفظ اسم الجهاز')}async function heartbeat(){const name=localStorage.getItem(NAME_KEY)||'جهاز ويب',type=localStorage.getItem(TYPE_KEY)||'web';try{await fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,name,type})})}catch{}}async function loadHubDevices(){try{const r=await fetch('/api/devices?current_id='+encodeURIComponent(myId));const d=await r.json();hubDevices=d.devices||[]}catch{hubDevices=[]}renderDevices()}function saveDirectDevice(){const name=$('directName').value.trim(),ip=$('directIp').value.trim();if(!/^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)){toast('عنوان IP غير صحيح');return}const old=directDevices.find(d=>d.ip===ip);if(old)old.name=name||old.name;else directDevices.unshift({name:name||('جهاز '+ip),ip,type:'android'});localStorage.setItem(DIRECT_KEY,JSON.stringify(directDevices));selected.add('direct:'+ip);$('directName').value='';$('directIp').value='';renderDevices()}function removeDirect(ip){directDevices=directDevices.filter(d=>d.ip!==ip);selected.delete('direct:'+ip);localStorage.setItem(DIRECT_KEY,JSON.stringify(directDevices));renderDevices()}function renderDevices(){const all=[{key:'windows',name:'هذا الكمبيوتر',type:'windows',sub:location.host},...hubDevices.map(d=>({key:'hub:'+d.id,name:d.name,type:d.type,sub:'متصل الآن'})),...directDevices.map(d=>({key:'direct:'+d.ip,name:d.name,type:d.type||'android',sub:d.ip+':5051',direct:true,ip:d.ip}))];$('deviceList').innerHTML=all.map(d=>`<div class="device ${selected.has(d.key)?'selected':''}"><input class="check" type="checkbox" ${selected.has(d.key)?'checked':''} onchange="toggleTarget('${esc(d.key)}',this.checked)"><div style="display:flex;gap:9px;align-items:center;min-width:0"><div class="ico">${icon(d.type)}</div><div style="min-width:0"><div class="name">${esc(d.name)}</div><div class="sub">${esc(d.sub)}</div></div></div>${d.direct?`<button class="mini" onclick="removeDirect('${esc(d.ip)}')">🗑</button>`:'<span>›</span>'}</div>`).join('')||'<div class="empty">لا توجد أجهزة.</div>';updateStats()}function toggleTarget(k,on){on?selected.add(k):selected.delete(k);renderDevices()}function selectAll(){const keys=['windows',...hubDevices.map(d=>'hub:'+d.id),...directDevices.map(d=>'direct:'+d.ip)];if(keys.length&&keys.every(k=>selected.has(k)))selected.clear();else keys.forEach(k=>selected.add(k));renderDevices()}function openOnMyIPhonePicker(){toast('افتح On My iPhone ثم اختر المجلد المطلوب');folderInput.click()}function relPath(f){return (f.webkitRelativePath||f.name||'').replace(/^\/+/, '')}function addFiles(list){const known=new Set(files.map(f=>relPath(f)+'|'+f.size+'|'+f.lastModified));for(const f of list){const k=relPath(f)+'|'+f.size+'|'+f.lastModified;if(!known.has(k)){files.push(f);known.add(k)}}renderFiles()}function renderFiles(){$('fileList').innerHTML=files.map((f,i)=>`<div class="file"><div class="ico">${f.webkitRelativePath?'📁':'📄'}</div><div style="min-width:0"><div class="name">${esc(f.name)}</div><div class="sub">${esc(relPath(f))} • ${fmt(f.size)}</div></div><button class="mini" onclick="files.splice(${i},1);renderFiles()">✕</button></div>`).join('');updateStats()}function clearFiles(){files=[];$('fileInput').value='';$('singleInput').value='';$('folderInput').value='';renderFiles()}function updateStats(){$('targetCount').textContent=selected.size;$('fileCount').textContent=files.length}let wakeLock=null;
-async function keepScreenAwake(){try{if('wakeLock'in navigator&&!wakeLock)wakeLock=await navigator.wakeLock.request('screen')}catch(e){}}
-async function releaseScreenAwake(){try{if(wakeLock){await wakeLock.release();wakeLock=null}}catch(e){}}
+let transferWakeActive=false;
+
+async function keepScreenAwake(){
+  transferWakeActive=true;
+  if(!('wakeLock' in navigator))return;
+  try{
+    if(wakeLock)return;
+    wakeLock=await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release',()=>{
+      wakeLock=null;
+      if(transferWakeActive && document.visibilityState==='visible'){
+        setTimeout(()=>keepScreenAwake(),250);
+      }
+    },{once:true});
+  }catch(e){
+    wakeLock=null;
+  }
+}
+
+async function releaseScreenAwake(){
+  transferWakeActive=false;
+  try{
+    if(wakeLock){
+      const lock=wakeLock;
+      wakeLock=null;
+      await lock.release();
+    }
+  }catch(e){}
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(transferWakeActive && document.visibilityState==='visible'){
+    keepScreenAwake();
+  }
+});
 
 async function postRaw(url,file){
   const headers={'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-File-Size':String(file.size),'X-Conflict-Policy':'skip'};
@@ -52,6 +85,7 @@ async function sendFiles(){
   if(!selected.size){toast('حدد جهازًا واحدًا على الأقل');return}
   if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}
   await keepScreenAwake();
+  $('status').textContent='جاري الإرسال...\nتم تفعيل إبقاء الشاشة مستيقظة أثناء النقل.';
   const direct=[...selected].filter(k=>k.startsWith('direct:')).map(k=>k.slice(7));
   const hub=[...selected].filter(k=>k.startsWith('hub:')).map(k=>k.slice(4));
   const toWindows=selected.has('windows');
