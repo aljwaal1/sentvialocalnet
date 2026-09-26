@@ -27,8 +27,8 @@ import org.json.JSONObject;
 
 final class FileSender {
     private static final int PORT = 5051;
-    private static final int BUFFER_SIZE = 64 * 1024;
-    private static final long RESUME_CHUNK_SIZE = 50L * 1024L * 1024L;
+    private static final int BUFFER_SIZE = 256 * 1024;
+    private static final long RESUME_CHUNK_SIZE = 128L * 1024L * 1024L;
 
     interface Listener {
         void onProgress(int completed, int total, int succeeded, int failed);
@@ -67,7 +67,7 @@ final class FileSender {
 
     private final Context context;
     private final ContentResolver resolver;
-    private final ExecutorService pool = Executors.newFixedThreadPool(3);
+    private final ExecutorService pool = Executors.newFixedThreadPool(6);
 
     FileSender(Context context) {
         this.context = context.getApplicationContext();
@@ -230,6 +230,12 @@ final class FileSender {
         }
     }
 
+    private InputStream openInput(FileInfo info) throws Exception {
+        InputStream input = info.temporary != null ? new FileInputStream(info.temporary) : resolver.openInputStream(info.uri);
+        if (input == null) throw new Exception("تعذر فتح الملف");
+        return input;
+    }
+
     private Boolean sendResumable(DeviceRecord device, SendItem item, FileInfo info, Listener listener) {
         ResumeState state = getResumeState(device, item, info);
         if (state == null) return null;
@@ -239,95 +245,125 @@ final class FileSender {
         }
 
         long offset = state.offset;
-        while (offset < info.size) {
-            long sendLength = Math.min(RESUME_CHUNK_SIZE, info.size - offset);
-            boolean sent = false;
+        InputStream input = null;
+        try {
+            input = openInput(info);
+            skipFully(input, offset);
 
-            for (int attempt = 0; attempt < 3 && !sent; attempt++) {
-                HttpURLConnection connection = null;
-                InputStream input = null;
-                OutputStream output = null;
+            // If the receiver already has all bytes in .svln.part but has not finalized it yet,
+            // send a zero-length resume request once to finalize.
+            if (offset >= info.size) {
+                HttpURLConnection finalizeConnection = null;
                 try {
-                    connection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
-                    connection.setConnectTimeout(12000);
-                    connection.setReadTimeout(120000);
-                    connection.setDoOutput(true);
-                    connection.setRequestMethod("POST");
-                    connection.setRequestProperty("Content-Type", "application/octet-stream");
-                    connection.setRequestProperty("X-File-Name", URLEncoder.encode(info.name, "UTF-8"));
-                    connection.setRequestProperty("X-File-Size", String.valueOf(info.size));
-                    connection.setRequestProperty("X-Transfer-Offset", String.valueOf(offset));
-                    connection.setRequestProperty("X-Conflict-Policy", "skip");
+                    finalizeConnection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
+                    finalizeConnection.setConnectTimeout(12000);
+                    finalizeConnection.setReadTimeout(120000);
+                    finalizeConnection.setDoOutput(true);
+                    finalizeConnection.setRequestMethod("POST");
+                    finalizeConnection.setRequestProperty("Content-Type", "application/octet-stream");
+                    finalizeConnection.setRequestProperty("X-File-Name", URLEncoder.encode(info.name, "UTF-8"));
+                    finalizeConnection.setRequestProperty("X-File-Size", String.valueOf(info.size));
+                    finalizeConnection.setRequestProperty("X-Transfer-Offset", String.valueOf(offset));
+                    finalizeConnection.setRequestProperty("X-Conflict-Policy", "skip");
                     if (item.relativePath != null && item.relativePath.length() > 0) {
-                        connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
+                        finalizeConnection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
                     }
-                    if (Build.VERSION.SDK_INT >= 19) connection.setFixedLengthStreamingMode(sendLength);
-                    else if (sendLength <= Integer.MAX_VALUE) connection.setFixedLengthStreamingMode((int)sendLength);
-                    else throw new Exception("جزء الإرسال أكبر من الحد المدعوم");
-
-                    input = info.temporary != null ? new FileInputStream(info.temporary) : resolver.openInputStream(info.uri);
-                    if (input == null) throw new Exception("تعذر فتح الملف");
-                    skipFully(input, offset);
-
-                    output = new BufferedOutputStream(connection.getOutputStream());
-                    byte[] buffer = new byte[BUFFER_SIZE];
-                    long remaining = sendLength;
-                    while (remaining > 0) {
-                        int wanted = (int)Math.min(buffer.length, remaining);
-                        int count = input.read(buffer, 0, wanted);
-                        if (count < 0) throw new Exception("انتهى الملف قبل اكتمال الجزء");
-                        output.write(buffer, 0, count);
-                        remaining -= count;
-                    }
-                    output.flush();
-                    output.close();
-                    output = null;
-                    input.close();
-                    input = null;
-
-                    int code = connection.getResponseCode();
-                    if (code >= 200 && code < 300) sent = true;
-                } catch (Exception ignored) {
+                    finalizeConnection.setFixedLengthStreamingMode(0);
+                    OutputStream empty = finalizeConnection.getOutputStream();
+                    empty.close();
+                    int code = finalizeConnection.getResponseCode();
+                    return Boolean.valueOf(code >= 200 && code < 300);
                 } finally {
-                    try { if (input != null) input.close(); } catch (Exception ignored) {}
-                    try { if (output != null) output.close(); } catch (Exception ignored) {}
-                    if (connection != null) connection.disconnect();
+                    if (finalizeConnection != null) finalizeConnection.disconnect();
                 }
+            }
 
-                ResumeState refreshed = getResumeState(device, item, info);
-                if (refreshed != null) {
-                    if (refreshed.completed) {
+            while (offset < info.size) {
+                final long sendLength = Math.min(RESUME_CHUNK_SIZE, info.size - offset);
+                boolean advanced = false;
+
+                for (int attempt = 0; attempt < 3 && !advanced; attempt++) {
+                    HttpURLConnection connection = null;
+                    OutputStream output = null;
+                    final long chunkStart = offset;
+                    try {
+                        connection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
+                        connection.setConnectTimeout(12000);
+                        connection.setReadTimeout(180000);
+                        connection.setDoOutput(true);
+                        connection.setRequestMethod("POST");
+                        connection.setRequestProperty("Connection", "keep-alive");
+                        connection.setRequestProperty("Content-Type", "application/octet-stream");
+                        connection.setRequestProperty("X-File-Name", URLEncoder.encode(info.name, "UTF-8"));
+                        connection.setRequestProperty("X-File-Size", String.valueOf(info.size));
+                        connection.setRequestProperty("X-Transfer-Offset", String.valueOf(chunkStart));
+                        connection.setRequestProperty("X-Conflict-Policy", "skip");
+                        if (item.relativePath != null && item.relativePath.length() > 0) {
+                            connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
+                        }
+                        if (Build.VERSION.SDK_INT >= 19) connection.setFixedLengthStreamingMode(sendLength);
+                        else connection.setFixedLengthStreamingMode((int)sendLength);
+
+                        output = new BufferedOutputStream(connection.getOutputStream(), BUFFER_SIZE);
+                        byte[] buffer = new byte[BUFFER_SIZE];
+                        long remaining = sendLength;
+                        while (remaining > 0) {
+                            int wanted = (int)Math.min(buffer.length, remaining);
+                            int count = input.read(buffer, 0, wanted);
+                            if (count < 0) throw new Exception("انتهى الملف قبل اكتمال الجزء");
+                            output.write(buffer, 0, count);
+                            remaining -= count;
+                        }
+                        output.flush();
+                        output.close();
+                        output = null;
+
+                        int code = connection.getResponseCode();
+                        if (code >= 200 && code < 300) {
+                            // A 2xx response is emitted only after the receiver has persisted this chunk.
+                            offset = chunkStart + sendLength;
+                            advanced = true;
+                            break;
+                        }
+                    } catch (Exception ignored) {
+                        // The source stream may already have advanced. Ask the receiver for the
+                        // exact persisted offset and reopen only when recovery is actually needed.
+                    } finally {
+                        try { if (output != null) output.close(); } catch (Exception ignored) {}
+                        if (connection != null) connection.disconnect();
+                    }
+
+                    ResumeState refreshed = getResumeState(device, item, info);
+                    if (refreshed != null && refreshed.completed) {
                         listener.onLog("تم إرسال " + info.name + " إلى " + device.name);
                         return Boolean.TRUE;
                     }
-                    if (refreshed.offset != offset) {
-                        offset = refreshed.offset;
-                        sent = true;
+
+                    long recoveryOffset = refreshed != null ? refreshed.offset : chunkStart;
+                    try { input.close(); } catch (Exception ignored) {}
+                    input = openInput(info);
+                    skipFully(input, recoveryOffset);
+                    offset = recoveryOffset;
+
+                    if (recoveryOffset != chunkStart) {
+                        advanced = true;
                     }
                 }
-            }
 
-            if (!sent) {
-                listener.onLog("فشل استكمال " + info.name + " إلى " + device.name);
-                return Boolean.FALSE;
-            }
-
-            ResumeState refreshed = getResumeState(device, item, info);
-            if (refreshed != null) {
-                if (refreshed.completed) {
-                    listener.onLog("تم إرسال " + info.name + " إلى " + device.name);
-                    return Boolean.TRUE;
+                if (!advanced) {
+                    listener.onLog("فشل استكمال " + info.name + " إلى " + device.name);
+                    return Boolean.FALSE;
                 }
-                offset = refreshed.offset;
-            } else {
-                offset += sendLength;
             }
-        }
 
-        ResumeState end = getResumeState(device, item, info);
-        boolean ok = end != null && end.completed;
-        listener.onLog((ok ? "تم إرسال " : "تعذر إنهاء ") + info.name + " إلى " + device.name);
-        return Boolean.valueOf(ok);
+            listener.onLog("تم إرسال " + info.name + " إلى " + device.name);
+            return Boolean.TRUE;
+        } catch (Exception error) {
+            listener.onLog("فشل استكمال " + info.name + " إلى " + device.name + ": " + message(error));
+            return Boolean.FALSE;
+        } finally {
+            try { if (input != null) input.close(); } catch (Exception ignored) {}
+        }
     }
 
     private void skipFully(InputStream input, long amount) throws Exception {
