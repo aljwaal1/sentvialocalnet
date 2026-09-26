@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject var service: LocalTransferService
     @State private var showImporter = false
     @State private var showFolderImporter = false
+    @State private var showAllOnMyIPhoneImporter = false
 
     var body: some View {
         NavigationView {
@@ -34,6 +35,14 @@ struct ContentView: View {
                 case .success(let urls):
                     if let folder = urls.first { service.addFolder(folder) }
                 case .failure(let error): service.status = "تعذر اختيار المجلد: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(isPresented: $showAllOnMyIPhoneImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                switch result {
+                case .success(let urls):
+                    service.addPickedItems(urls)
+                case .failure(let error):
+                    service.status = "تعذر اختيار محتويات On My iPhone: \(error.localizedDescription)"
                 }
             }
         }
@@ -106,10 +115,16 @@ struct ContentView: View {
                     Button("مسح") { service.clearPendingFiles() }.buttonStyle(.bordered)
                 }
             }
+
+            Button { showAllOnMyIPhoneImporter = true } label: {
+                Label("اختيار كل محتويات On My iPhone", systemImage: "iphone.gen3")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
             if service.pendingFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("اضغط «إضافة مجلد»، ادخل إلى المجلد المطلوب في Files ثم اضغط Open. سيظهر بعدها هنا كخيار قابل للتحديد ✓.").font(.subheadline).foregroundColor(.secondary)
-                    Text("كرر «إضافة مجلد» لإضافة مجلدات أخرى، ثم حدد ما تريد إرساله بعلامة ✓.").font(.caption).foregroundColor(.secondary)
+                    Text("لإرسال كل ما يظهر لك داخل On My iPhone اضغط الزر بالأعلى، ثم افتح On My iPhone واختر كل الملفات والمجلدات التي يسمح iOS بتحديدها.").font(.subheadline).foregroundColor(.secondary)
+                    Text("iOS لا يسمح للتطبيق بالدخول تلقائيًا إلى بيانات التطبيقات المخفية؛ يمكن إرسال فقط العناصر الظاهرة في Files والتي تمنحها للتطبيق.").font(.caption).foregroundColor(.secondary)
                 }
             } else {
                 if !service.selectedFolders.isEmpty {
