@@ -133,6 +133,7 @@ final class FileSender {
                 connection.setRequestProperty("X-File-Size", "0");
                 connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
                 connection.setRequestProperty("X-Entry-Type", "directory");
+                connection.setRequestProperty("X-Conflict-Policy", "skip");
                 connection.setFixedLengthStreamingMode(0);
                 OutputStream empty = connection.getOutputStream();
                 empty.close();
@@ -152,6 +153,7 @@ final class FileSender {
             connection.setRequestProperty("Content-Type", "application/octet-stream");
             connection.setRequestProperty("X-File-Name", URLEncoder.encode(info.name, "UTF-8"));
             connection.setRequestProperty("X-File-Size", String.valueOf(info.size));
+            connection.setRequestProperty("X-Conflict-Policy", "skip");
             if (item.relativePath != null && item.relativePath.length() > 0) {
                 connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
             }
