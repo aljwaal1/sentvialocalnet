@@ -494,6 +494,7 @@ class DesktopApp:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.devices = self.store.get_devices()
         self.files: List[Path] = []
+        self.file_relative_paths: Dict[str, str] = {}
         self.direct_selected: Set[str] = {item.ip for item in self.devices if item.selected}
         self.web_selected: Set[str] = set()
         self.qr_photo = None
@@ -591,13 +592,14 @@ class DesktopApp:
         self.targets.pack(fill="both", expand=True)
         self.targets.bind("<Double-1>", self._toggle_target)
 
-        ttk.Label(right_panel, text="الملفات والإرسال", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(right_panel, text="اختر عدة ملفات ثم أرسلها إلى كل الأجهزة المحددة", style="Sub.TLabel").pack(anchor="w", pady=(2, 10))
+        ttk.Label(right_panel, text="الملفات والمجلدات", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(right_panel, text="أرسل ملفات أو مجلدًا كاملًا أو عدة مجلدات مع الحفاظ على البنية", style="Sub.TLabel").pack(anchor="w", pady=(2, 10))
 
         file_buttons = ttk.Frame(right_panel, style="Card.TFrame")
         file_buttons.pack(fill="x")
-        ttk.Button(file_buttons, text="اختيار الملفات", command=self._choose_files, style="Primary.TButton").pack(side="left")
-        ttk.Button(file_buttons, text="مسح القائمة", command=self._clear_files, style="Soft.TButton").pack(side="left", padx=8)
+        ttk.Button(file_buttons, text="اختيار ملفات", command=self._choose_files, style="Primary.TButton").pack(side="left")
+        ttk.Button(file_buttons, text="إضافة مجلد", command=self._choose_folder, style="Soft.TButton").pack(side="left", padx=6)
+        ttk.Button(file_buttons, text="مسح القائمة", command=self._clear_files, style="Soft.TButton").pack(side="left", padx=6)
         ttk.Button(file_buttons, text="إرسال الآن", command=self._send, style="Primary.TButton").pack(side="right")
 
         self.file_list = tk.Listbox(right_panel, height=8, font=("Segoe UI", 10), bd=0, highlightthickness=1, highlightbackground="#E4E7EC")
@@ -727,19 +729,47 @@ class DesktopApp:
         known = {str(item) for item in self.files}
         for value in selected:
             if value not in known:
-                self.files.append(Path(value))
+                path = Path(value)
+                self.files.append(path)
+                self.file_relative_paths.pop(str(path), None)
                 known.add(value)
+        self._render_files()
+
+    def _choose_folder(self) -> None:
+        selected = filedialog.askdirectory(title="اختر مجلدًا — يمكنك الضغط مرة أخرى لإضافة مجلد آخر")
+        if not selected:
+            return
+        root = Path(selected)
+        known = {str(item) for item in self.files}
+        added = 0
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = str(path)
+            if key not in known:
+                self.files.append(path)
+                known.add(key)
+                added += 1
+            try:
+                relative = Path(root.name) / path.relative_to(root)
+                self.file_relative_paths[key] = relative.as_posix()
+            except Exception:
+                self.file_relative_paths[key] = f"{root.name}/{path.name}"
+        self.status_var.set(f"تمت إضافة مجلد {root.name}: {added} ملف. يمكنك إضافة مجلد آخر.")
         self._render_files()
 
     def _clear_files(self) -> None:
         self.files.clear()
+        self.file_relative_paths.clear()
         self._render_files()
 
     def _render_files(self) -> None:
         self.file_list.delete(0, "end")
         for path in self.files:
             try:
-                self.file_list.insert("end", f"{path.name}    ({format_size(path.stat().st_size)})")
+                relative = self.file_relative_paths.get(str(path), "")
+                label = relative if relative else path.name
+                self.file_list.insert("end", f"{label}    ({format_size(path.stat().st_size)})")
             except OSError:
                 self.file_list.insert("end", path.name)
 
@@ -876,6 +906,9 @@ class DesktopApp:
             "X-File-Name": urllib.parse.quote(path.name),
             "X-File-Size": str(size),
         }
+        relative = self.file_relative_paths.get(str(path), "")
+        if relative:
+            headers["X-Relative-Path"] = urllib.parse.quote(relative)
         try:
             connection.putrequest("POST", "/upload")
             for key, value in headers.items():
