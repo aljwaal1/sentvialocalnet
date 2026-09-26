@@ -52,15 +52,7 @@
       <button class="primary" id="open">فتح نقل الملفات</button>
       <button class="secondary" id="save">حفظ العنوان</button>
     </div>
-    <div class="buttons" style="margin-top:10px">
-      <button class="secondary" id="pickOne">ملف واحد</button>
-      <button class="secondary" id="pickMany">عدة ملفات</button>
-    </div>
-    <button class="secondary" id="pickFolder" style="width:100%;margin-top:10px">مجلد كامل</button>
-    <input id="singleInput" type="file" hidden>
-    <input id="multiInput" type="file" multiple hidden>
-    <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
-    <div id="selectionInfo" class="small">يمكنك اختيار ملف، عدة ملفات، أو مجلد كامل. سيتم الحفاظ على بنية المجلد عند الاستقبال على الأجهزة التي تدعم ذلك.</div>
+    <div class="small">بعد فتح واجهة النقل ستجد 3 خيارات واضحة: <b>ملف</b>، <b>ملفات</b>، أو <b>مجلد كامل</b>. عند إرسال مجلد يحافظ التطبيق على بنيته أثناء النقل.</div>
     <div class="small">العنوان الحالي الذي استخدمته اليوم: <span class="current">192.168.8.2</span>. إذا تغيّر عنوان الكمبيوتر لاحقًا، عدّله هنا فقط.</div>
   </section>
 
@@ -118,24 +110,6 @@
     localStorage.setItem(key,host);
     location.href='http://'+host+':5051/';
   });
-
-  const singleInput=document.getElementById('singleInput');
-  const multiInput=document.getElementById('multiInput');
-  const folderInput=document.getElementById('folderInput');
-  const info=document.getElementById('selectionInfo');
-  document.getElementById('pickOne').addEventListener('click',()=>singleInput.click());
-  document.getElementById('pickMany').addEventListener('click',()=>multiInput.click());
-  document.getElementById('pickFolder').addEventListener('click',()=>folderInput.click());
-  function describeSelection(input,kind){
-    const list=[...(input.files||[])];
-    if(!list.length) return;
-    const bytes=list.reduce((sum,f)=>sum+(f.size||0),0);
-    const mb=(bytes/1048576).toFixed(bytes>104857600?0:1);
-    info.textContent=(kind==='folder'?'تم اختيار مجلد: ':'تم الاختيار: ')+list.length+' عنصر • '+mb+' MB. افتح واجهة الكمبيوتر ثم اختر نفس العناصر هناك للإرسال.';
-  }
-  singleInput.addEventListener('change',()=>describeSelection(singleInput,'single'));
-  multiInput.addEventListener('change',()=>describeSelection(multiInput,'multi'));
-  folderInput.addEventListener('change',()=>describeSelection(folderInput,'folder'));
 
   if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 </script>
