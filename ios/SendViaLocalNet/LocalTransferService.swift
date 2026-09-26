@@ -58,6 +58,7 @@ final class LocalTransferService: ObservableObject {
     private var discoveryFD: Int32 = -1
     private var discoveryRunning = false
     private var started = false
+    private var activeSecurityScopes: [String: URL] = [:]
 
     private let knownDevicesKey = "svln.known.devices"
 
@@ -103,6 +104,8 @@ final class LocalTransferService: ObservableObject {
         listener?.cancel()
         discoveryRunning = false
         if discoveryFD >= 0 { Darwin.close(discoveryFD) }
+        for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeSecurityScopes.removeAll()
     }
 
     func toggleDevice(_ id: String) {
@@ -117,6 +120,8 @@ final class LocalTransferService: ObservableObject {
         }
         pendingFiles.removeAll()
         selectedFolders.removeAll()
+        for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeSecurityScopes.removeAll()
         progress = 0
     }
 
@@ -142,15 +147,16 @@ final class LocalTransferService: ObservableObject {
 
     func addFolder(_ folderURL: URL) {
         let scoped = folderURL.startAccessingSecurityScopedResource()
-        defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
 
         let rootName = folderURL.lastPathComponent
         if selectedFolders.contains(where: { $0.name.caseInsensitiveCompare(rootName) == .orderedSame && $0.url == folderURL }) {
+            if scoped { folderURL.stopAccessingSecurityScopedResource() }
             status = "هذا المجلد مضاف بالفعل: \(rootName)"
             return
         }
 
         let rootId = UUID().uuidString.lowercased()
+        if scoped { activeSecurityScopes[rootId] = folderURL }
         var newItems: [PendingFile] = []
         newItems.append(PendingFile(url: folderURL, name: rootName, size: 0, relativePath: rootName, isDirectory: true, rootFolderId: rootId))
 
@@ -160,6 +166,7 @@ final class LocalTransferService: ObservableObject {
             includingPropertiesForKeys: Array(keys),
             options: [.skipsHiddenFiles]
         ) else {
+            if let url = activeSecurityScopes.removeValue(forKey: rootId) { url.stopAccessingSecurityScopedResource() }
             status = "تعذر قراءة المجلد: \(folderURL.lastPathComponent)"
             return
         }
@@ -177,10 +184,9 @@ final class LocalTransferService: ObservableObject {
                 }
 
                 guard values.isRegularFile == true else { continue }
-                let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
-                try FileManager.default.copyItem(at: source, to: target)
-                let copied = try target.resourceValues(forKeys: [.fileSizeKey])
-                newItems.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath, isDirectory: false, rootFolderId: rootId))
+                // Keep the original URL under the root folder's security scope.
+                // This avoids duplicating a large Downloads folder into app temporary storage.
+                newItems.append(PendingFile(url: source, name: name, size: Int64(values.fileSize ?? 0), relativePath: relativePath, isDirectory: false, rootFolderId: rootId))
             } catch {
                 status = "تعذر تجهيز عنصر: \(source.lastPathComponent)"
             }
@@ -203,6 +209,7 @@ final class LocalTransferService: ObservableObject {
         }
         pendingFiles.removeAll { $0.rootFolderId == id }
         selectedFolders.removeAll { $0.id == id }
+        if let url = activeSecurityScopes.removeValue(forKey: id) { url.stopAccessingSecurityScopedResource() }
         status = "تم حذف المجلد من قائمة الإرسال"
     }
 
