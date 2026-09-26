@@ -105,6 +105,8 @@ class DirectDevice:
     name: str
     ip: str
     selected: bool = True
+    id: str = ""
+    type: str = "device"
 
 
 class PersistentStore:
@@ -134,6 +136,16 @@ class PersistentStore:
     def get_device_name(self) -> str:
         return str(self.config.get("device_name") or socket.gethostname() or "كمبيوتر Windows")
 
+    def get_device_id(self) -> str:
+        with self.lock:
+            value = str(self.config.get("device_id") or "").strip()
+            if value:
+                return value
+            value = "windows-" + str(uuid.uuid4())
+            self.config["device_id"] = value
+            self._write_json(self.config_path, self.config)
+            return value
+
     def set_device_name(self, name: str) -> None:
         with self.lock:
             self.config["device_name"] = name.strip() or "كمبيوتر Windows"
@@ -143,7 +155,13 @@ class PersistentStore:
         result: List[DirectDevice] = []
         for item in self.config.get("devices", []):
             try:
-                result.append(DirectDevice(str(item["name"]), str(item["ip"]), bool(item.get("selected", True))))
+                result.append(DirectDevice(
+                    str(item["name"]),
+                    str(item["ip"]),
+                    bool(item.get("selected", True)),
+                    str(item.get("id", "")),
+                    str(item.get("type", "device")),
+                ))
             except Exception:
                 continue
         return result
@@ -349,7 +367,7 @@ class TransferHandler(BaseHTTPRequestHandler):
         elif path == "/icon.svg":
             self._serve_file(web_root / "icon.svg", "image/svg+xml")
         elif path == "/upload":
-            self._text(f"SVLN|{self.state.store.get_device_name()}|windows")
+            self._text(f"SVLN|{self.state.store.get_device_name()}|windows|{self.state.store.get_device_id()}")
         elif path == "/api/info":
             self._json({
                 "name": self.state.store.get_device_name(),
@@ -654,7 +672,9 @@ class DesktopApp:
             self.targets.delete(row)
         for device in self.devices:
             chosen = device.ip in self.direct_selected
-            self.targets.insert("", "end", iid=f"direct:{device.ip}", values=("☑" if chosen else "☐", device.name, "مباشر", f"{device.ip}:{PORT}"))
+            identity = device.id or device.ip
+            kind = device.type if device.type and device.type != "device" else "محفوظ"
+            self.targets.insert("", "end", iid=f"direct:{identity}", values=("☑" if chosen else "☐", device.name, kind, f"{device.ip}:{PORT}"))
         for device_id, client in current_web.items():
             chosen = device_id in self.web_selected
             self.targets.insert("", "end", iid=f"web:{device_id}", values=("☑" if chosen else "☐", client["name"], "iPhone/Web", "متصل الآن"))
@@ -664,11 +684,20 @@ class DesktopApp:
         if not item:
             return
         kind, value = item.split(":", 1)
-        target_set = self.direct_selected if kind == "direct" else self.web_selected
-        if value in target_set:
-            target_set.remove(value)
+        if kind == "direct":
+            device = next((d for d in self.devices if (d.id or d.ip) == value), None)
+            if device is None:
+                return
+            current_ip = device.ip
+            if current_ip in self.direct_selected:
+                self.direct_selected.remove(current_ip)
+            else:
+                self.direct_selected.add(current_ip)
         else:
-            target_set.add(value)
+            if value in self.web_selected:
+                self.web_selected.remove(value)
+            else:
+                self.web_selected.add(value)
         for device in self.devices:
             device.selected = device.ip in self.direct_selected
         self.store.save_devices(self.devices)
@@ -733,7 +762,7 @@ class DesktopApp:
         self.executor.submit(self._scan_worker, subnet)
 
     def _scan_worker(self, subnet: str) -> None:
-        def probe(host: str) -> Optional[Tuple[str, str]]:
+        def probe(host: str) -> Optional[Tuple[str, str, str, str]]:
             try:
                 connection = http.client.HTTPConnection(host, PORT, timeout=0.65)
                 connection.request("GET", "/upload")
@@ -742,24 +771,62 @@ class DesktopApp:
                 connection.close()
                 if 200 <= response.status < 300 and body.startswith("SVLN|"):
                     parts = body.split("|")
-                    return host, parts[1] if len(parts) > 1 else f"جهاز {host}"
+                    name = parts[1] if len(parts) > 1 and parts[1] else f"جهاز {host}"
+                    kind = parts[2] if len(parts) > 2 and parts[2] else "device"
+                    device_id = parts[3].strip() if len(parts) > 3 else ""
+                    return host, name, kind, device_id
             except Exception:
                 return None
             return None
 
         hosts = [f"{subnet}.{index}" for index in range(1, 255)]
-        found: List[Tuple[str, str]] = []
+        found: List[Tuple[str, str, str, str]] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
             for result in pool.map(probe, hosts):
                 if result:
                     found.append(result)
-        for host, name in found:
-            existing = next((item for item in self.devices if item.ip == host), None)
+
+        for host, name, kind, device_id in found:
+            existing = None
+            if device_id:
+                existing = next((item for item in self.devices if item.id == device_id), None)
+            if existing is None:
+                existing = next((item for item in self.devices if item.ip == host), None)
+
             if existing:
+                old_ip = existing.ip
+                was_selected = old_ip in self.direct_selected or existing.selected
                 existing.name = name or existing.name
+                existing.type = kind or existing.type
+                if device_id:
+                    existing.id = device_id
+                existing.ip = host
+                if old_ip != host:
+                    self.direct_selected.discard(old_ip)
+                    if was_selected:
+                        self.direct_selected.add(host)
             else:
-                self.devices.append(DirectDevice(name or f"جهاز {host}", host, True))
+                existing = DirectDevice(name or f"جهاز {host}", host, True, device_id, kind)
+                self.devices.append(existing)
                 self.direct_selected.add(host)
+
+        # Remove duplicates once a stable device ID is known.
+        deduped: List[DirectDevice] = []
+        seen_ids: Set[str] = set()
+        seen_ips: Set[str] = set()
+        for item in self.devices:
+            if item.id:
+                if item.id in seen_ids:
+                    continue
+                seen_ids.add(item.id)
+            elif item.ip in seen_ips:
+                continue
+            seen_ips.add(item.ip)
+            deduped.append(item)
+        self.devices = deduped
+
+        for item in self.devices:
+            item.selected = item.ip in self.direct_selected
         self.store.save_devices(self.devices)
         self.events.put(("scan_done", len(found)))
 
