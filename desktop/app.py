@@ -294,7 +294,7 @@ class TransferHandler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path")
 
     def _json(self, value: Any, status: int = 200) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -412,7 +412,16 @@ class TransferHandler(BaseHTTPRequestHandler):
             return
         raw_name = self.headers.get("X-File-Name", "")
         filename = urllib.parse.unquote(raw_name) if raw_name else f"received_{int(time.time())}.bin"
-        target = unique_path(downloads_dir(), filename)
+        raw_relative = self.headers.get("X-Relative-Path", "")
+        relative = urllib.parse.unquote(raw_relative) if raw_relative else ""
+        base_dir = downloads_dir()
+        if relative:
+            parts = [safe_filename(part) for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+            if len(parts) > 1:
+                base_dir = base_dir.joinpath(*parts[:-1])
+                base_dir.mkdir(parents=True, exist_ok=True)
+                filename = parts[-1]
+        target = unique_path(base_dir, filename)
         remaining = length
         try:
             with target.open("wb") as output:
