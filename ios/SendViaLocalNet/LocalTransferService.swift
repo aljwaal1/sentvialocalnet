@@ -352,7 +352,7 @@ final class LocalTransferService: ObservableObject {
         guard let handle = try? FileHandle(forReadingFrom: file.url) else { return false }
         defer { try? handle.close() }
 
-        let chunkSize = 8 * 1024 * 1024
+        let chunkSize = 32 * 1024 * 1024
         var offset = state.offset
         do { try handle.seek(toOffset: UInt64(offset)) }
         catch { return false }
@@ -436,7 +436,7 @@ final class LocalTransferService: ObservableObject {
             return await sendLegacy(file: file, to: device)
         }
 
-        // Windows receiver supports persisted 8 MB chunks and resumes after Wi-Fi/app interruption.
+        // Windows receiver supports persisted 32 MB chunks and resumes after Wi-Fi/app interruption.
         if device.type.lowercased().contains("windows") || device.type.lowercased().contains("pc") {
             let ok = await sendResumable(file: file, to: device)
             if !ok {
