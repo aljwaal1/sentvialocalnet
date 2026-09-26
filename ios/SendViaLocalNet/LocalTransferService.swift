@@ -277,15 +277,24 @@ final class LocalTransferService: ObservableObject {
         }
     }
 
-    private func send(file: PendingFile, to device: LocalDevice) async -> Bool {
-        guard let url = URL(string: "http://\(device.ip):\(device.port)/upload") else { return false }
+    private struct ResumeStatus: Decodable {
+        let ok: Bool?
+        let offset: Int64?
+        let completed: Bool?
+    }
+
+    private func makeUploadRequest(file: PendingFile, to device: LocalDevice, offset: Int64? = nil) -> URLRequest? {
+        guard let url = URL(string: "http://\(device.ip):\(device.port)/upload") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 180
+        request.timeoutInterval = 120
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(file.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? file.name, forHTTPHeaderField: "X-File-Name")
         request.setValue(String(file.size), forHTTPHeaderField: "X-File-Size")
         request.setValue("skip", forHTTPHeaderField: "X-Conflict-Policy")
+        if let offset = offset {
+            request.setValue(String(offset), forHTTPHeaderField: "X-Transfer-Offset")
+        }
         if file.isDirectory {
             request.setValue("directory", forHTTPHeaderField: "X-Entry-Type")
         }
@@ -294,6 +303,110 @@ final class LocalTransferService: ObservableObject {
         }
         request.setValue(deviceId, forHTTPHeaderField: "X-SVLN-Sender-ID")
         request.setValue(deviceName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? deviceName, forHTTPHeaderField: "X-SVLN-Sender-Name")
+        return request
+    }
+
+    private func resumeStatus(for file: PendingFile, on device: LocalDevice) async -> (supported: Bool, offset: Int64, completed: Bool) {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = device.ip
+        components.port = device.port
+        components.path = "/api/resume-status"
+        var queryItems = [
+            URLQueryItem(name: "filename", value: file.name),
+            URLQueryItem(name: "size", value: String(file.size))
+        ]
+        if let relativePath = file.relativePath, !relativePath.isEmpty {
+            queryItems.append(URLQueryItem(name: "relative", value: relativePath))
+        }
+        components.queryItems = queryItems
+        guard let url = components.url else { return (false, 0, false) }
+
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300,
+                  let value = try? JSONDecoder().decode(ResumeStatus.self, from: data) else {
+                return (false, 0, false)
+            }
+            let offset = max(0, min(file.size, value.offset ?? 0))
+            return (true, offset, value.completed ?? false)
+        } catch {
+            return (false, 0, false)
+        }
+    }
+
+    private func sendResumable(file: PendingFile, to device: LocalDevice) async -> Bool {
+        var state = await resumeStatus(for: file, on: device)
+        guard state.supported else { return await sendLegacy(file: file, to: device) }
+        if state.completed { return true }
+
+        guard let handle = try? FileHandle(forReadingFrom: file.url) else { return false }
+        defer { try? handle.close() }
+
+        let chunkSize = 8 * 1024 * 1024
+        var offset = state.offset
+        do { try handle.seek(toOffset: UInt64(offset)) }
+        catch { return false }
+
+        var needsFinalize = offset >= file.size
+        while offset < file.size || needsFinalize {
+            let data: Data
+            if needsFinalize {
+                data = Data()
+                needsFinalize = false
+            } else {
+                do {
+                    data = try handle.read(upToCount: chunkSize) ?? Data()
+                } catch {
+                    return false
+                }
+                if data.isEmpty { return false }
+            }
+
+            var sent = false
+            for _ in 0..<3 {
+                guard var request = makeUploadRequest(file: file, to: device, offset: offset) else { return false }
+                request.httpBody = data
+                do {
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    if let http = response as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
+                        sent = true
+                        break
+                    }
+                } catch {
+                    // Query the receiver below and continue from its persisted .svln.part offset.
+                }
+
+                state = await resumeStatus(for: file, on: device)
+                if state.completed { return true }
+                if state.supported && state.offset != offset {
+                    offset = state.offset
+                    do { try handle.seek(toOffset: UInt64(offset)) } catch { return false }
+                    sent = true
+                    break
+                }
+            }
+
+            if !sent { return false }
+
+            // A receiver-side offset change means the chunk loop should restart from that point.
+            let after = await resumeStatus(for: file, on: device)
+            if after.completed { return true }
+            if after.supported {
+                offset = after.offset
+                do { try handle.seek(toOffset: UInt64(offset)) } catch { return false }
+                if offset >= file.size { needsFinalize = true }
+            } else {
+                offset += Int64(data.count)
+            }
+        }
+        return (await resumeStatus(for: file, on: device)).completed
+    }
+
+    private func sendLegacy(file: PendingFile, to device: LocalDevice) async -> Bool {
+        guard var request = makeUploadRequest(file: file, to: device) else { return false }
         do {
             let response: URLResponse
             if file.isDirectory {
@@ -309,6 +422,22 @@ final class LocalTransferService: ObservableObject {
             await MainActor.run { self.status = "فشل إرسال \(file.name): \(error.localizedDescription)" }
             return false
         }
+    }
+
+    private func send(file: PendingFile, to device: LocalDevice) async -> Bool {
+        if file.isDirectory {
+            return await sendLegacy(file: file, to: device)
+        }
+
+        // Windows receiver supports persisted 8 MB chunks and resumes after Wi-Fi/app interruption.
+        if device.type.lowercased().contains("windows") || device.type.lowercased().contains("pc") {
+            let ok = await sendResumable(file: file, to: device)
+            if !ok {
+                await MainActor.run { self.status = "تعذر استكمال \(file.name)" }
+            }
+            return ok
+        }
+        return await sendLegacy(file: file, to: device)
     }
 
     private func startReceiver() {
@@ -503,7 +632,7 @@ final class LocalTransferService: ObservableObject {
         let reason: String
         switch code { case 200: reason = "OK"; case 204: reason = "No Content"; case 400: reason = "Bad Request"; case 404: reason = "Not Found"; case 405: reason = "Method Not Allowed"; case 409: reason = "Conflict"; case 422: reason = "Unprocessable Entity"; default: reason = "Internal Server Error" }
         let data = Data(body.utf8)
-        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-Relative-Path,X-Entry-Type,X-Conflict-Policy,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
+        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-Relative-Path,X-Entry-Type,X-Conflict-Policy,X-Transfer-Offset,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
         var packet = Data(response.utf8); packet.append(data)
         connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
     }
