@@ -1049,9 +1049,30 @@ class DesktopApp:
         finally:
             connection.close()
 
-    def _send_direct(self, path: Path, device: DirectDevice) -> Tuple[bool, str]:
+    def _resume_status(self, path: Path, device: DirectDevice, relative: str, size: int) -> Optional[Dict[str, Any]]:
+        query = urllib.parse.urlencode({
+            "filename": path.name,
+            "relative": relative,
+            "size": str(size),
+        })
+        connection = http.client.HTTPConnection(device.ip, PORT, timeout=8)
+        try:
+            connection.request("GET", f"/api/resume-status?{query}")
+            response = connection.getresponse()
+            body = response.read().decode("utf-8", "replace")
+            if not (200 <= response.status < 300):
+                return None
+            data = json.loads(body)
+            if not isinstance(data, dict) or not data.get("ok"):
+                return None
+            return data
+        except Exception:
+            return None
+        finally:
+            connection.close()
+
+    def _send_direct_legacy(self, path: Path, device: DirectDevice, relative: str, size: int) -> Tuple[bool, str]:
         connection = http.client.HTTPConnection(device.ip, PORT, timeout=120)
-        size = path.stat().st_size
         headers = {
             "Content-Type": "application/octet-stream",
             "Content-Length": str(size),
@@ -1059,7 +1080,6 @@ class DesktopApp:
             "X-File-Size": str(size),
             "X-Conflict-Policy": "skip",
         }
-        relative = self.file_relative_paths.get(str(path), "")
         if relative:
             headers["X-Relative-Path"] = urllib.parse.quote(relative)
         try:
@@ -1081,6 +1101,82 @@ class DesktopApp:
             return False, f"فشل {path.name} إلى {device.name}: {exc}"
         finally:
             connection.close()
+
+    def _send_direct(self, path: Path, device: DirectDevice) -> Tuple[bool, str]:
+        size = path.stat().st_size
+        relative = self.file_relative_paths.get(str(path), "")
+        state = self._resume_status(path, device, relative, size)
+        if state is None:
+            return self._send_direct_legacy(path, device, relative, size)
+
+        if bool(state.get("completed")):
+            return True, f"{path.name} موجود كاملًا على {device.name} — تم التخطي"
+
+        chunk_size = 50 * 1024 * 1024
+        offset = max(0, min(size, int(state.get("offset", 0) or 0)))
+
+        try:
+            with path.open("rb") as source:
+                source.seek(offset)
+                while offset < size:
+                    to_send = min(chunk_size, size - offset)
+                    data = source.read(to_send)
+                    if not data:
+                        return False, f"تعذر قراءة {path.name} عند {offset}"
+
+                    sent = False
+                    for _attempt in range(3):
+                        connection = http.client.HTTPConnection(device.ip, PORT, timeout=120)
+                        headers = {
+                            "Content-Type": "application/octet-stream",
+                            "Content-Length": str(len(data)),
+                            "X-File-Name": urllib.parse.quote(path.name),
+                            "X-File-Size": str(size),
+                            "X-Transfer-Offset": str(offset),
+                            "X-Conflict-Policy": "skip",
+                        }
+                        if relative:
+                            headers["X-Relative-Path"] = urllib.parse.quote(relative)
+                        try:
+                            connection.request("POST", "/upload", body=data, headers=headers)
+                            response = connection.getresponse()
+                            response.read()
+                            if 200 <= response.status < 300:
+                                sent = True
+                                break
+                        except Exception:
+                            pass
+                        finally:
+                            connection.close()
+
+                        refreshed = self._resume_status(path, device, relative, size)
+                        if refreshed and bool(refreshed.get("completed")):
+                            return True, f"تم إرسال {path.name} إلى {device.name}"
+                        if refreshed is not None:
+                            new_offset = max(0, min(size, int(refreshed.get("offset", offset) or offset)))
+                            if new_offset != offset:
+                                offset = new_offset
+                                source.seek(offset)
+                                sent = True
+                                break
+
+                    if not sent:
+                        return False, f"فشل استكمال {path.name} إلى {device.name}"
+
+                    refreshed = self._resume_status(path, device, relative, size)
+                    if refreshed and bool(refreshed.get("completed")):
+                        return True, f"تم إرسال {path.name} إلى {device.name}"
+                    if refreshed is not None:
+                        offset = max(0, min(size, int(refreshed.get("offset", offset + len(data)) or (offset + len(data)))))
+                    else:
+                        offset += len(data)
+                    source.seek(offset)
+
+            final = self._resume_status(path, device, relative, size)
+            success = bool(final and final.get("completed"))
+            return success, (f"تم إرسال {path.name} إلى {device.name}" if success else f"تعذر إنهاء {path.name} على {device.name}")
+        except Exception as exc:
+            return False, f"فشل {path.name} إلى {device.name}: {exc}"
 
     def _queue_for_web(self, path: Path, device_id: str) -> Tuple[bool, str]:
         try:
