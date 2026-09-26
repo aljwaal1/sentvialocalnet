@@ -129,57 +129,64 @@ final class LocalTransferService: ObservableObject {
         if !prepared.isEmpty { status = "تم اختيار \(prepared.count) ملف" }
     }
 
-    func prepareFolders(_ folderURLs: [URL]) {
-        clearPendingFiles()
-        var prepared: [PendingFile] = []
+    func addFolder(_ folderURL: URL) {
+        var prepared = pendingFiles
+        let scoped = folderURL.startAccessingSecurityScopedResource()
+        defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
 
-        for folderURL in folderURLs {
-            let scoped = folderURL.startAccessingSecurityScopedResource()
-            defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
+        let rootName = Self.safeFileName(folderURL.lastPathComponent)
+        let rootKey = rootName.lowercased()
 
-            let rootName = Self.safeFileName(folderURL.lastPathComponent)
-            prepared.append(PendingFile(url: folderURL, name: rootName, size: 0, relativePath: rootName, isDirectory: true))
+        // Avoid adding the same root folder twice.
+        if prepared.contains(where: { $0.isDirectory && ($0.relativePath ?? "").lowercased() == rootKey }) {
+            status = "هذا المجلد مضاف بالفعل: \(rootName)"
+            return
+        }
 
-            let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
-            guard let enumerator = FileManager.default.enumerator(
-                at: folderURL,
-                includingPropertiesForKeys: Array(keys),
-                options: [.skipsHiddenFiles]
-            ) else {
-                status = "تعذر قراءة المجلد: \(folderURL.lastPathComponent)"
-                continue
-            }
+        prepared.append(PendingFile(url: folderURL, name: rootName, size: 0, relativePath: rootName, isDirectory: true))
 
-            for case let source as URL in enumerator {
-                do {
-                    let values = try source.resourceValues(forKeys: keys)
-                    let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
-                    let relativePath = rootName + "/" + rel.split(separator: "/").map { Self.safeFileName(String($0)) }.joined(separator: "/")
-                    let name = Self.safeFileName(source.lastPathComponent)
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else {
+            status = "تعذر قراءة المجلد: \(folderURL.lastPathComponent)"
+            return
+        }
 
-                    if values.isDirectory == true {
-                        prepared.append(PendingFile(url: source, name: name, size: 0, relativePath: relativePath, isDirectory: true))
-                        continue
-                    }
+        for case let source as URL in enumerator {
+            do {
+                let values = try source.resourceValues(forKeys: keys)
+                let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
+                let relativePath = rootName + "/" + rel.split(separator: "/").map { Self.safeFileName(String($0)) }.joined(separator: "/")
+                let name = Self.safeFileName(source.lastPathComponent)
 
-                    guard values.isRegularFile == true else { continue }
-                    let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
-                    try FileManager.default.copyItem(at: source, to: target)
-                    let copied = try target.resourceValues(forKeys: [.fileSizeKey])
-                    prepared.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath, isDirectory: false))
-                } catch {
-                    status = "تعذر تجهيز عنصر: \(source.lastPathComponent)"
+                if values.isDirectory == true {
+                    prepared.append(PendingFile(url: source, name: name, size: 0, relativePath: relativePath, isDirectory: true))
+                    continue
                 }
+
+                guard values.isRegularFile == true else { continue }
+                let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
+                try FileManager.default.copyItem(at: source, to: target)
+                let copied = try target.resourceValues(forKeys: [.fileSizeKey])
+                prepared.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath, isDirectory: false))
+            } catch {
+                status = "تعذر تجهيز عنصر: \(source.lastPathComponent)"
             }
         }
 
         pendingFiles = prepared
-        if prepared.isEmpty {
-            status = "لم يتم العثور على عناصر قابلة للإرسال"
-        } else {
-            let dirs = prepared.filter { $0.isDirectory }.count
-            let files = prepared.count - dirs
-            status = "تم تجهيز \(files) ملف و\(dirs) مجلد"
+        let dirs = prepared.filter { $0.isDirectory }.count
+        let files = prepared.count - dirs
+        status = "تمت إضافة \(rootName) • المجموع: \(files) ملف و\(dirs) مجلد"
+    }
+
+    func prepareFolders(_ folderURLs: [URL]) {
+        clearPendingFiles()
+        for folderURL in folderURLs {
+            addFolder(folderURL)
         }
     }
 
