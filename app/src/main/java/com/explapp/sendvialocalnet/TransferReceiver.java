@@ -16,9 +16,12 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
+import java.net.URI;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import org.json.JSONObject;
 
 final class TransferReceiver {
     static final int PORT = 5051;
@@ -109,11 +112,20 @@ final class TransferReceiver {
         try {
             InputStream input = new BufferedInputStream(socket.getInputStream());
             String header = readHeader(input);
-            if (header.startsWith("OPTIONS")) {
+            String requestLine = header.split("\r\n", 2)[0];
+            String[] requestParts = requestLine.split(" ");
+            String method = requestParts.length > 0 ? requestParts[0].toUpperCase(Locale.US) : "";
+            String requestPath = requestParts.length > 1 ? requestParts[1] : "/";
+
+            if ("OPTIONS".equals(method)) {
                 writeResponse(socket, "200 OK", "OK");
                 return;
             }
-            if (!header.startsWith("POST")) {
+            if ("GET".equals(method) && requestPath.startsWith("/api/resume-status")) {
+                handleResumeStatus(socket, requestPath);
+                return;
+            }
+            if (!"POST".equals(method)) {
                 String name = nameProvider.getDeviceName();
                 writeResponse(socket, "200 OK", "SVLN|" + clean(name) + "|android");
                 return;
@@ -164,6 +176,15 @@ final class TransferReceiver {
             String conflict = headerValue(header, "X-Conflict-Policy");
             if (conflict == null || conflict.length() == 0) conflict = "skip";
 
+            long totalSize = length;
+            String totalHeader = headerValue(header, "X-File-Size");
+            try { if (totalHeader != null) totalSize = Long.parseLong(totalHeader); } catch (Exception ignored) {}
+
+            String offsetHeader = headerValue(header, "X-Transfer-Offset");
+            boolean resumable = offsetHeader != null;
+            long offset = 0L;
+            try { if (offsetHeader != null) offset = Long.parseLong(offsetHeader); } catch (Exception ignored) {}
+
             if (target.exists()) {
                 if ("skip".equalsIgnoreCase(conflict)) {
                     drain(input, length);
@@ -178,7 +199,26 @@ final class TransferReceiver {
             }
 
             File temp = new File(directory, filename + ".svln.part");
-            stream(input, temp, length);
+            long current = temp.exists() ? temp.length() : 0L;
+            if (resumable && current != offset) {
+                drain(input, length);
+                writeResponse(socket, "409 Conflict", "OFFSET_MISMATCH:" + current);
+                return;
+            }
+
+            stream(input, temp, length, resumable);
+            long received = temp.length();
+
+            if (totalSize > 0 && received < totalSize) {
+                writeResponse(socket, "200 OK", "PARTIAL:" + received);
+                listener.onLog("تم حفظ جزء " + received + " من " + totalSize + " للملف " + filename);
+                return;
+            }
+            if (totalSize > 0 && received > totalSize) {
+                writeResponse(socket, "409 Conflict", "SIZE_MISMATCH:" + received);
+                return;
+            }
+
             if (target.exists() && !target.delete()) throw new Exception("تعذر استبدال الملف الموجود");
             if (!temp.renameTo(target)) {
                 copyReplace(temp, target);
@@ -195,6 +235,75 @@ final class TransferReceiver {
         } finally {
             try { socket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    private void handleResumeStatus(Socket socket, String requestPath) throws Exception {
+        String filename = queryValue(requestPath, "filename");
+        String relative = queryValue(requestPath, "relative");
+        long total = 0L;
+        try { total = Long.parseLong(queryValue(requestPath, "size")); } catch (Exception ignored) {}
+
+        if (filename == null) filename = "";
+        filename = exactComponent(filename);
+
+        File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "SendViaLocalNet");
+        if (relative != null && relative.length() > 0) {
+            String[] parts = relative.replace("\\", "/").split("/");
+            if (parts.length > 1) {
+                for (int i = 0; i < parts.length - 1; i++) {
+                    String part = exactComponent(parts[i]);
+                    directory = new File(directory, part);
+                }
+                filename = exactComponent(parts[parts.length - 1]);
+            } else if (parts.length == 1) {
+                filename = exactComponent(parts[0]);
+            }
+        }
+
+        File target = new File(directory, filename);
+        File part = new File(directory, filename + ".svln.part");
+        boolean completed = target.exists() && (total <= 0L || target.length() == total);
+        long offset = completed ? 0L : (part.exists() ? part.length() : 0L);
+        if (total > 0L && offset > total) {
+            part.delete();
+            offset = 0L;
+        }
+
+        JSONObject json = new JSONObject();
+        json.put("ok", true);
+        json.put("offset", offset);
+        json.put("completed", completed);
+        json.put("filename", filename);
+        writeJsonResponse(socket, "200 OK", json.toString());
+    }
+
+    private String queryValue(String requestPath, String key) {
+        try {
+            URI uri = new URI(requestPath);
+            String query = uri.getRawQuery();
+            if (query == null) return "";
+            for (String pair : query.split("&")) {
+                int eq = pair.indexOf('=');
+                String rawKey = eq >= 0 ? pair.substring(0, eq) : pair;
+                if (key.equals(URLDecoder.decode(rawKey, "UTF-8"))) {
+                    String rawValue = eq >= 0 ? pair.substring(eq + 1) : "";
+                    return URLDecoder.decode(rawValue, "UTF-8");
+                }
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private void writeJsonResponse(Socket socket, String status, String body) throws Exception {
+        OutputStream output = socket.getOutputStream();
+        byte[] data = body.getBytes("UTF-8");
+        String headers = "HTTP/1.1 " + status + "\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Content-Length: " + data.length + "\r\nConnection: close\r\n\r\n";
+        output.write(headers.getBytes("UTF-8"));
+        output.write(data);
+        output.flush();
     }
 
     private String readHeader(InputStream input) throws Exception {
@@ -216,7 +325,11 @@ final class TransferReceiver {
     }
 
     private void stream(InputStream input, File target, long total) throws Exception {
-        FileOutputStream output = new FileOutputStream(target);
+        stream(input, target, total, false);
+    }
+
+    private void stream(InputStream input, File target, long total, boolean append) throws Exception {
+        FileOutputStream output = new FileOutputStream(target, append);
         byte[] buffer = new byte[BUFFER_SIZE];
         long remaining = total;
         long received = 0;
@@ -260,7 +373,7 @@ final class TransferReceiver {
         String headers = "HTTP/1.1 " + status + "\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Access-Control-Allow-Methods: POST, OPTIONS, GET\r\n" +
-                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy\r\n" +
+                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy, X-Transfer-Offset\r\n" +
                 "Content-Type: text/plain; charset=utf-8\r\n" +
                 "Content-Length: " + data.length + "\r\nConnection: close\r\n\r\n";
         output.write(headers.getBytes("UTF-8"));
