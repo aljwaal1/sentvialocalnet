@@ -436,15 +436,11 @@ final class LocalTransferService: ObservableObject {
             return await sendLegacy(file: file, to: device)
         }
 
-        // Windows receiver supports persisted 50 MB chunks and resumes after Wi-Fi/app interruption.
-        if device.type.lowercased().contains("windows") || device.type.lowercased().contains("pc") {
-            let ok = await sendResumable(file: file, to: device)
-            if !ok {
-                await MainActor.run { self.status = "تعذر استكمال \(file.name)" }
-            }
-            return ok
+        let ok = await sendResumable(file: file, to: device)
+        if !ok {
+            await MainActor.run { self.status = "تعذر استكمال \(file.name)" }
         }
-        return await sendLegacy(file: file, to: device)
+        return ok
     }
 
     private func startReceiver() {
@@ -502,6 +498,63 @@ final class LocalTransferService: ObservableObject {
         readHeader()
     }
 
+    private func resolvedReceiveDestination(name: String, relative: String?) -> URL? {
+        var folder = Self.receiveFolder()
+        var finalName = name
+
+        if let relative = relative, !relative.isEmpty {
+            let decoded = relative.removingPercentEncoding ?? relative
+            let rawParts = decoded.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map(String.init)
+            var parts: [String] = []
+            for raw in rawParts {
+                guard let value = Self.exactComponent(raw) else { return nil }
+                parts.append(value)
+            }
+            if parts.count > 1 {
+                for component in parts.dropLast() {
+                    folder.appendPathComponent(component, isDirectory: true)
+                }
+                finalName = parts.last ?? name
+            } else if parts.count == 1 {
+                finalName = parts[0]
+            }
+        }
+
+        guard let exactName = Self.exactComponent(finalName) else { return nil }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(exactName, isDirectory: false)
+    }
+
+    private func handleResumeStatus(path: String, connection: NWConnection) {
+        guard let components = URLComponents(string: "http://localhost\(path)") else {
+            sendHTTP(connection, code: 400, body: "{\"ok\":false}", contentType: "application/json")
+            return
+        }
+        let items = components.queryItems ?? []
+        let filename = items.first(where: { $0.name == "filename" })?.value ?? ""
+        let relative = items.first(where: { $0.name == "relative" })?.value
+        let total = Int64(items.first(where: { $0.name == "size" })?.value ?? "0") ?? 0
+
+        guard let destination = resolvedReceiveDestination(name: filename, relative: relative) else {
+            sendHTTP(connection, code: 422, body: "{\"ok\":false,\"error\":\"INVALID_NAME\"}", contentType: "application/json")
+            return
+        }
+
+        let part = destination.appendingPathExtension("svln.part")
+        let destinationSize = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? -1
+        let completed = FileManager.default.fileExists(atPath: destination.path) && (total <= 0 || destinationSize == total)
+        var offset: Int64 = 0
+        if !completed, FileManager.default.fileExists(atPath: part.path) {
+            offset = (try? part.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            if total > 0 && offset > total {
+                try? FileManager.default.removeItem(at: part)
+                offset = 0
+            }
+        }
+        let body = "{\"ok\":true,\"offset\":\(offset),\"completed\":\(completed ? "true" : "false"),\"filename\":\"\(Self.jsonEscape(destination.lastPathComponent))\"}"
+        sendHTTP(connection, code: 200, body: body, contentType: "application/json")
+    }
+
     private func processRequest(_ headerText: String, initialBody: Data, connection: NWConnection) {
         let lines = headerText.components(separatedBy: "\r\n")
         guard let first = lines.first else { sendHTTP(connection, code: 400, body: "Bad request"); return }
@@ -509,6 +562,7 @@ final class LocalTransferService: ObservableObject {
         guard firstParts.count >= 2 else { sendHTTP(connection, code: 400, body: "Bad request"); return }
         let method = String(firstParts[0]).uppercased()
         let path = String(firstParts[1])
+
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
@@ -516,8 +570,14 @@ final class LocalTransferService: ObservableObject {
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             headers[key] = value
         }
+
         if method == "OPTIONS" { sendHTTP(connection, code: 204, body: ""); return }
+        if method == "GET" && path.hasPrefix("/api/resume-status") {
+            handleResumeStatus(path: path, connection: connection)
+            return
+        }
         guard path.hasPrefix("/upload") else { sendHTTP(connection, code: 404, body: "Not found"); return }
+
         if method == "GET" {
             let body = "{\"ok\":true,\"name\":\"\(Self.jsonEscape(deviceName))\",\"type\":\"ios\",\"port\":5051}"
             sendHTTP(connection, code: 200, body: body, contentType: "application/json")
@@ -531,54 +591,80 @@ final class LocalTransferService: ObservableObject {
             sendHTTP(connection, code: 422, body: "Invalid file name")
             return
         }
-        let expected = Int64(headers["x-file-size"] ?? headers["content-length"] ?? "") ?? -1
-        var folder = Self.receiveFolder()
 
+        let relativeHeader = headers["x-relative-path"]
         if (headers["x-entry-type"] ?? "").lowercased() == "directory" {
-            if let encodedRelative = headers["x-relative-path"], !encodedRelative.isEmpty {
-                let decodedRelative = encodedRelative.removingPercentEncoding ?? encodedRelative
-                let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").compactMap { Self.exactComponent(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
-                for component in parts {
+            var folder = Self.receiveFolder()
+            if let relativeHeader = relativeHeader, !relativeHeader.isEmpty {
+                let decodedRelative = relativeHeader.removingPercentEncoding ?? relativeHeader
+                let rawParts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map(String.init)
+                for raw in rawParts {
+                    guard let component = Self.exactComponent(raw) else {
+                        sendHTTP(connection, code: 422, body: "Invalid directory name")
+                        return
+                    }
                     folder.appendPathComponent(component, isDirectory: true)
                 }
-                do {
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                    DispatchQueue.main.async { self.status = "تم استلام المجلد \(folder.lastPathComponent)" }
-                    sendHTTP(connection, code: 200, body: "OK")
-                } catch {
-                    sendHTTP(connection, code: 500, body: "Cannot create directory")
-                }
             } else {
+                folder.appendPathComponent(name, isDirectory: true)
+            }
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                DispatchQueue.main.async { self.status = "تم استلام المجلد \(folder.lastPathComponent)" }
                 sendHTTP(connection, code: 200, body: "OK")
+            } catch {
+                sendHTTP(connection, code: 500, body: "Cannot create directory")
             }
             return
         }
-        if let encodedRelative = headers["x-relative-path"], !encodedRelative.isEmpty {
-            let decodedRelative = encodedRelative.removingPercentEncoding ?? encodedRelative
-            let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").compactMap { Self.exactComponent(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
-            if parts.count > 1 {
-                for component in parts.dropLast() {
-                    folder.appendPathComponent(component, isDirectory: true)
-                }
-                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            }
+
+        guard let destination = resolvedReceiveDestination(name: name, relative: relativeHeader) else {
+            sendHTTP(connection, code: 422, body: "Invalid path")
+            return
         }
-        let destination = folder.appendingPathComponent(name, isDirectory: false)
+
+        let requestLength = Int64(headers["content-length"] ?? "") ?? Int64(initialBody.count)
+        let totalSize = Int64(headers["x-file-size"] ?? "") ?? requestLength
         let conflict = (headers["x-conflict-policy"] ?? "skip").lowercased()
+        let offsetHeader = headers["x-transfer-offset"]
+        let resumable = offsetHeader != nil
+        let offset = Int64(offsetHeader ?? "0") ?? 0
         let existedBefore = FileManager.default.fileExists(atPath: destination.path)
         let receiveTarget = destination.appendingPathExtension("svln.part")
-        try? FileManager.default.removeItem(at: receiveTarget)
-        FileManager.default.createFile(atPath: receiveTarget.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: receiveTarget) else { sendHTTP(connection, code: 500, body: "Cannot create file"); return }
+
+        if resumable {
+            let current = FileManager.default.fileExists(atPath: receiveTarget.path)
+                ? ((try? receiveTarget.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0)
+                : 0
+            guard current == offset else {
+                sendHTTP(connection, code: 409, body: "OFFSET_MISMATCH:\(current)")
+                return
+            }
+            if !FileManager.default.fileExists(atPath: receiveTarget.path) {
+                FileManager.default.createFile(atPath: receiveTarget.path, contents: nil)
+            }
+        } else {
+            try? FileManager.default.removeItem(at: receiveTarget)
+            FileManager.default.createFile(atPath: receiveTarget.path, contents: nil)
+        }
+
+        guard let handle = try? FileHandle(forWritingTo: receiveTarget) else {
+            sendHTTP(connection, code: 500, body: "Cannot create file")
+            return
+        }
+        if resumable { try? handle.seekToEnd() }
 
         var written: Int64 = 0
         do {
             if !initialBody.isEmpty {
-                try handle.write(contentsOf: initialBody)
-                written += Int64(initialBody.count)
+                let allowed = requestLength >= 0 ? min(Int64(initialBody.count), requestLength) : Int64(initialBody.count)
+                if allowed > 0 {
+                    try handle.write(contentsOf: initialBody.prefix(Int(allowed)))
+                    written += allowed
+                }
             }
         } catch {
-            try? handle.close(); try? FileManager.default.removeItem(at: destination)
+            try? handle.close()
             sendHTTP(connection, code: 500, body: "Write failed")
             return
         }
@@ -587,48 +673,71 @@ final class LocalTransferService: ObservableObject {
         let finish: (Bool) -> Void = { [weak self] success in
             try? handle.close()
             guard let self = self else { return }
-            if success {
-                if existedBefore && conflict != "overwrite" {
-                    try? FileManager.default.removeItem(at: receiveTarget)
-                    if conflict == "cancel" {
-                        self.sendHTTP(connection, code: 409, body: "EXISTS")
-                    } else {
-                        DispatchQueue.main.async { self.status = "تم تخطي \(destination.lastPathComponent) لأنه موجود مسبقًا" }
-                        self.sendHTTP(connection, code: 200, body: "SKIPPED")
-                    }
-                    return
-                }
-                do {
-                    if FileManager.default.fileExists(atPath: destination.path) {
-                        try FileManager.default.removeItem(at: destination)
-                    }
-                    try FileManager.default.moveItem(at: receiveTarget, to: destination)
-                    let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? written
-                    DispatchQueue.main.async {
-                        self.receivedFiles.insert(ReceivedFile(url: destination, name: destination.lastPathComponent, size: size, receivedAt: Date()), at: 0)
-                        self.status = "تم استلام \(destination.lastPathComponent)"
-                    }
-                    self.sendHTTP(connection, code: 200, body: "OK")
-                } catch {
-                    try? FileManager.default.removeItem(at: receiveTarget)
-                    self.sendHTTP(connection, code: 500, body: "Cannot finalize file")
-                }
-            } else {
-                try? FileManager.default.removeItem(at: receiveTarget)
+
+            if !success {
+                if !resumable { try? FileManager.default.removeItem(at: receiveTarget) }
                 self.sendHTTP(connection, code: 500, body: "Receive failed")
+                return
+            }
+
+            let partSize = (try? receiveTarget.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            if totalSize > 0 && partSize < totalSize {
+                DispatchQueue.main.async { self.status = "تم حفظ جزء \(partSize) من \(totalSize) للملف \(destination.lastPathComponent)" }
+                self.sendHTTP(connection, code: 200, body: "PARTIAL:\(partSize)")
+                return
+            }
+            if totalSize > 0 && partSize > totalSize {
+                self.sendHTTP(connection, code: 409, body: "SIZE_MISMATCH:\(partSize)")
+                return
+            }
+
+            if existedBefore && conflict != "overwrite" {
+                try? FileManager.default.removeItem(at: receiveTarget)
+                if conflict == "cancel" {
+                    self.sendHTTP(connection, code: 409, body: "EXISTS")
+                } else {
+                    DispatchQueue.main.async { self.status = "تم تخطي \(destination.lastPathComponent) لأنه موجود مسبقًا" }
+                    self.sendHTTP(connection, code: 200, body: "SKIPPED")
+                }
+                return
+            }
+
+            do {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: receiveTarget, to: destination)
+                let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? partSize
+                DispatchQueue.main.async {
+                    self.receivedFiles.insert(ReceivedFile(url: destination, name: destination.lastPathComponent, size: size, receivedAt: Date()), at: 0)
+                    self.status = "تم استلام \(destination.lastPathComponent)"
+                }
+                self.sendHTTP(connection, code: 200, body: "OK")
+            } catch {
+                self.sendHTTP(connection, code: 500, body: "Cannot finalize file")
             }
         }
 
-        if expected >= 0 && written >= expected { finish(true); return }
+        if requestLength >= 0 && written >= requestLength { finish(true); return }
+
         receiveMore = { [weak connection] in
             guard let connection = connection else { return }
             connection.receive(minimumIncompleteLength: 1, maximumLength: 128 * 1024) { data, _, complete, error in
                 if let data = data, !data.isEmpty {
-                    do { try handle.write(contentsOf: data); written += Int64(data.count) }
-                    catch { finish(false); return }
+                    do {
+                        let remaining = requestLength >= 0 ? max(0, requestLength - written) : Int64(data.count)
+                        let allowed = min(Int64(data.count), remaining)
+                        if allowed > 0 {
+                            try handle.write(contentsOf: data.prefix(Int(allowed)))
+                            written += allowed
+                        }
+                    } catch {
+                        finish(false)
+                        return
+                    }
                 }
                 if error != nil { finish(false) }
-                else if (expected >= 0 && written >= expected) || complete { finish(true) }
+                else if (requestLength >= 0 && written >= requestLength) || complete { finish(true) }
                 else { receiveMore() }
             }
         }
