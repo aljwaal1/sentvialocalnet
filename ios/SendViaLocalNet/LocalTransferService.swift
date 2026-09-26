@@ -3,7 +3,7 @@ import Network
 import UIKit
 import Darwin
 
-struct LocalDevice: Identifiable, Hashable {
+struct LocalDevice: Identifiable, Hashable, Codable {
     let id: String
     var name: String
     var type: String
@@ -48,6 +48,25 @@ final class LocalTransferService: ObservableObject {
     private var discoveryRunning = false
     private var started = false
 
+    private let knownDevicesKey = "svln.known.devices"
+
+    init() {
+        loadKnownDevices()
+    }
+
+    private func loadKnownDevices() {
+        guard let data = UserDefaults.standard.data(forKey: knownDevicesKey),
+              let saved = try? JSONDecoder().decode([LocalDevice].self, from: data) else { return }
+        devices = saved.map {
+            LocalDevice(id: $0.id, name: $0.name, type: $0.type, ip: $0.ip, port: $0.port, selected: $0.selected, lastSeen: $0.lastSeen)
+        }
+    }
+
+    private func saveKnownDevices() {
+        guard let data = try? JSONEncoder().encode(devices) else { return }
+        UserDefaults.standard.set(data, forKey: knownDevicesKey)
+    }
+
     private lazy var deviceId: String = {
         if let saved = UserDefaults.standard.string(forKey: "svln.device.id"), !saved.isEmpty { return saved }
         let value = UUID().uuidString.lowercased()
@@ -78,6 +97,7 @@ final class LocalTransferService: ObservableObject {
     func toggleDevice(_ id: String) {
         guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
         devices[index].selected.toggle()
+        saveKnownDevices()
     }
 
     func clearPendingFiles() {
@@ -439,7 +459,10 @@ final class LocalTransferService: ObservableObject {
             if let index = self.devices.firstIndex(where: { $0.id == id || ($0.ip == ip && $0.port == port) }) {
                 let selected = self.devices[index].selected
                 self.devices[index] = LocalDevice(id: id, name: name, type: type, ip: ip, port: port, selected: selected, lastSeen: Date())
-            } else { self.devices.append(LocalDevice(id: id, name: name, type: type, ip: ip, port: port, selected: true, lastSeen: Date())) }
+            } else {
+                self.devices.append(LocalDevice(id: id, name: name, type: type, ip: ip, port: port, selected: true, lastSeen: Date()))
+            }
+            self.saveKnownDevices()
         }
     }
 
