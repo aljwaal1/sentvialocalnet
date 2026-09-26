@@ -9,6 +9,7 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -134,7 +135,7 @@ final class TransferReceiver {
                     String[] dirParts = relative.replace("\\", "/").split("/");
                     File targetDir = directory;
                     for (String raw : dirParts) {
-                        String part = safeFilename(raw);
+                        String part = exactComponent(raw);
                         if (part.length() == 0 || ".".equals(part) || "..".equals(part)) continue;
                         targetDir = new File(targetDir, part);
                     }
@@ -151,15 +152,38 @@ final class TransferReceiver {
                 String[] parts = relative.replace("\\", "/").split("/");
                 if (parts.length > 1) {
                     for (int i = 0; i < parts.length - 1; i++) {
-                        String part = safeFilename(parts[i]);
+                        String part = exactComponent(parts[i]);
                         if (part.length() > 0 && !".".equals(part) && !"..".equals(part)) directory = new File(directory, part);
                     }
                     if (!directory.exists() && !directory.mkdirs()) throw new Exception("تعذر إنشاء بنية المجلد");
-                    filename = safeFilename(parts[parts.length - 1]);
+                    filename = exactComponent(parts[parts.length - 1]);
                 }
             }
-            target = uniqueFile(directory, safeFilename(filename));
-            stream(input, target, length);
+            filename = exactComponent(filename);
+            target = new File(directory, filename);
+            String conflict = headerValue(header, "X-Conflict-Policy");
+            if (conflict == null || conflict.length() == 0) conflict = "skip";
+
+            if (target.exists()) {
+                if ("skip".equalsIgnoreCase(conflict)) {
+                    drain(input, length);
+                    writeResponse(socket, "200 OK", "SKIPPED");
+                    listener.onLog("تم تخطي " + target.getName() + " لأنه موجود مسبقًا");
+                    return;
+                }
+                if ("cancel".equalsIgnoreCase(conflict)) {
+                    writeResponse(socket, "409 Conflict", "EXISTS");
+                    return;
+                }
+            }
+
+            File temp = new File(directory, filename + ".svln.part");
+            stream(input, temp, length);
+            if (target.exists() && !target.delete()) throw new Exception("تعذر استبدال الملف الموجود");
+            if (!temp.renameTo(target)) {
+                copyReplace(temp, target);
+                temp.delete();
+            }
             writeResponse(socket, "200 OK", "OK");
             listener.onReceived(target);
             listener.onLog("تم استقبال " + target.getName());
@@ -235,7 +259,7 @@ final class TransferReceiver {
         String headers = "HTTP/1.1 " + status + "\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Access-Control-Allow-Methods: POST, OPTIONS, GET\r\n" +
-                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type\r\n" +
+                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy\r\n" +
                 "Content-Type: text/plain; charset=utf-8\r\n" +
                 "Content-Length: " + data.length + "\r\nConnection: close\r\n\r\n";
         output.write(headers.getBytes("UTF-8"));
@@ -243,21 +267,38 @@ final class TransferReceiver {
         output.flush();
     }
 
-    private File uniqueFile(File directory, String name) {
-        File file = new File(directory, name);
-        if (!file.exists()) return file;
-        int dot = name.lastIndexOf('.');
-        String base = dot > 0 ? name.substring(0, dot) : name;
-        String extension = dot > 0 ? name.substring(dot) : "";
-        int index = 2;
-        while (file.exists()) file = new File(directory, base + " (" + index++ + ")" + extension);
-        return file;
+    private String exactComponent(String value) throws Exception {
+        if (value == null || value.length() == 0 || ".".equals(value) || "..".equals(value)) {
+            throw new Exception("اسم ملف/مجلد غير صالح");
+        }
+        if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0 || value.indexOf('\0') >= 0) {
+            throw new Exception("اسم غير صالح: " + value);
+        }
+        return value;
     }
 
-    private String safeFilename(String value) {
-        String name = value == null || value.trim().length() == 0 ? "received_" + System.currentTimeMillis() + ".bin" : value;
-        return name.replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_")
-                .replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_");
+    private void drain(InputStream input, long length) throws Exception {
+        byte[] buffer = new byte[BUFFER_SIZE];
+        long remaining = length;
+        while (remaining > 0) {
+            int count = input.read(buffer, 0, (int)Math.min(buffer.length, remaining));
+            if (count < 0) break;
+            remaining -= count;
+        }
+    }
+
+    private void copyReplace(File source, File target) throws Exception {
+        FileInputStream in = new FileInputStream(source);
+        FileOutputStream out = new FileOutputStream(target, false);
+        byte[] buffer = new byte[BUFFER_SIZE];
+        int count;
+        try {
+            while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+            out.flush();
+        } finally {
+            try { in.close(); } catch (Exception ignored) {}
+            try { out.close(); } catch (Exception ignored) {}
+        }
     }
 
     private String clean(String value) {
