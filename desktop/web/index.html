@@ -65,27 +65,117 @@ document.addEventListener('visibilitychange',()=>{
   }
 });
 
-async function postRaw(url,file){
-  const headers={'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-File-Size':String(file.size),'X-Conflict-Policy':'skip'};
+async function getResumeState(base,file){
+  const rp=relPath(file);
+  const q=new URLSearchParams();
+  q.set('filename',file.name);
+  q.set('size',String(file.size));
+  if(rp&&rp!==file.name)q.set('relative',rp);
+  try{
+    const r=await fetch(base+'/api/resume-status?'+q.toString(),{cache:'no-store'});
+    if(!r.ok)return null;
+    const d=await r.json();
+    return d&&d.ok?d:null;
+  }catch(e){
+    return null;
+  }
+}
+
+async function postRawLegacy(url,file){
+  const headers={
+    'Content-Type':'application/octet-stream',
+    'X-File-Name':encodeURIComponent(file.name),
+    'X-File-Size':String(file.size),
+    'X-Conflict-Policy':'skip'
+  };
   const rp=relPath(file);
   if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
   let lastError='';
   for(let attempt=1;attempt<=3;attempt++){
     try{
       const r=await fetch(url,{method:'POST',headers,body:file});
-      if(r.ok)return r;
+      if(r.ok)return true;
       lastError='HTTP '+r.status;
-    }catch(e){lastError=e&&e.message?e.message:String(e)}
+    }catch(e){
+      lastError=e&&e.message?e.message:String(e);
+    }
     await new Promise(resolve=>setTimeout(resolve,500*attempt));
   }
   throw new Error(lastError||'تعذر الإرسال بعد 3 محاولات');
+}
+
+async function postRaw(base,file){
+  const chunkSize=50*1024*1024;
+  const rp=relPath(file);
+  let state=await getResumeState(base,file);
+
+  // Older receiver: keep backward compatibility.
+  if(!state)return postRawLegacy(base+'/upload',file);
+  if(state.completed)return true;
+
+  let offset=Math.max(0,Math.min(file.size,Number(state.offset||0)));
+
+  while(offset<file.size){
+    const end=Math.min(file.size,offset+chunkSize);
+    const body=file.slice(offset,end);
+    let advanced=false;
+    let lastError='';
+
+    for(let attempt=1;attempt<=3&&!advanced;attempt++){
+      const headers={
+        'Content-Type':'application/octet-stream',
+        'X-File-Name':encodeURIComponent(file.name),
+        'X-File-Size':String(file.size),
+        'X-Transfer-Offset':String(offset),
+        'X-Conflict-Policy':'skip'
+      };
+      if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
+
+      try{
+        const r=await fetch(base+'/upload',{method:'POST',headers,body});
+        if(r.ok){
+          advanced=true;
+          break;
+        }
+        lastError='HTTP '+r.status;
+      }catch(e){
+        lastError=e&&e.message?e.message:String(e);
+      }
+
+      const refreshed=await getResumeState(base,file);
+      if(refreshed&&refreshed.completed)return true;
+      if(refreshed){
+        const remoteOffset=Math.max(0,Math.min(file.size,Number(refreshed.offset||0)));
+        if(remoteOffset!==offset){
+          offset=remoteOffset;
+          advanced=true;
+          break;
+        }
+      }
+
+      await new Promise(resolve=>setTimeout(resolve,500*attempt));
+    }
+
+    if(!advanced)throw new Error(lastError||'تعذر استكمال الملف بعد 3 محاولات');
+
+    const after=await getResumeState(base,file);
+    if(after&&after.completed)return true;
+    if(after){
+      offset=Math.max(0,Math.min(file.size,Number(after.offset||0)));
+    }else{
+      offset=end;
+    }
+  }
+
+  const finalState=await getResumeState(base,file);
+  return !finalState||!!finalState.completed;
 }
 
 async function sendFiles(){
   if(!selected.size){toast('حدد جهازًا واحدًا على الأقل');return}
   if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}
   await keepScreenAwake();
-  $('status').textContent='جاري الإرسال...\nتم تفعيل إبقاء الشاشة مستيقظة أثناء النقل.';
+  $('status').textContent='جاري الإرسال...\nتم تفعيل إبقاء الشاشة مستيقظة، والنقل يستكمل من آخر جزء محفوظ عند الانقطاع.';
   const direct=[...selected].filter(k=>k.startsWith('direct:')).map(k=>k.slice(7));
   const hub=[...selected].filter(k=>k.startsWith('hub:')).map(k=>k.slice(4));
   const toWindows=selected.has('windows');
@@ -96,8 +186,8 @@ async function sendFiles(){
   try{
     for(const file of files){
       const jobs=[];
-      if(toWindows)jobs.push({name:file.name,promise:postRaw('/upload',file)});
-      for(const ip of direct)jobs.push({name:file.name,promise:postRaw('http://'+ip+':5051/upload',file)});
+      if(toWindows)jobs.push({name:file.name,promise:postRaw('',file)});
+      for(const ip of direct)jobs.push({name:file.name,promise:postRaw('http://'+ip+':5051',file)});
       if(hub.length){
         const sender=encodeURIComponent(localStorage.getItem(NAME_KEY)||'جهاز ويب');
         const url='/api/hub-upload?recipients='+encodeURIComponent(hub.join(','))+'&filename='+encodeURIComponent(file.name)+'&sender_name='+sender;
