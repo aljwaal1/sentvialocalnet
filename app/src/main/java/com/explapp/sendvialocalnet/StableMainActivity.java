@@ -16,6 +16,7 @@ import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -460,6 +461,7 @@ public class StableMainActivity extends Activity {
         if (targets.isEmpty() || files.isEmpty()) { toast("حدد جهازًا واختر ملفات أو مجلدات"); return; }
         sendButton.setEnabled(false);
         progress.setProgress(0);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         sender.sendItems(targets, new ArrayList<FileSender.SendItem>(files), new FileSender.Listener() {
             @Override public void onProgress(final int done, final int total, final int ok, final int failed) {
                 runOnUiThread(new Runnable() { @Override public void run() {
@@ -470,6 +472,7 @@ public class StableMainActivity extends Activity {
             @Override public void onLog(String message) { }
             @Override public void onDone(final int ok, final int failed) {
                 runOnUiThread(new Runnable() { @Override public void run() {
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     sendButton.setEnabled(true);
                     if (failed == 0) toast("تم الإرسال بنجاح");
                 }});
@@ -508,6 +511,7 @@ public class StableMainActivity extends Activity {
     private void requestStoragePermission() { if(Build.VERSION.SDK_INT>=23 && Build.VERSION.SDK_INT<=32 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.WRITE_EXTERNAL_STORAGE},5); }
 
     @Override protected void onDestroy() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if(scanner!=null)scanner.shutdown(); if(receiver!=null)receiver.shutdown(); if(sender!=null)sender.shutdown(); super.onDestroy();
     }
 }
