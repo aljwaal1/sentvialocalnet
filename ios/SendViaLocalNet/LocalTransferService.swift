@@ -59,6 +59,7 @@ final class LocalTransferService: ObservableObject {
     private var discoveryRunning = false
     private var started = false
     private var activeSecurityScopes: [String: URL] = [:]
+    private var activeFileScopes: [UUID: URL] = [:]
 
     private let knownDevicesKey = "svln.known.devices"
 
@@ -106,6 +107,8 @@ final class LocalTransferService: ObservableObject {
         if discoveryFD >= 0 { Darwin.close(discoveryFD) }
         for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
         activeSecurityScopes.removeAll()
+        for url in activeFileScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeFileScopes.removeAll()
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = false
         }
@@ -125,27 +128,52 @@ final class LocalTransferService: ObservableObject {
         selectedFolders.removeAll()
         for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
         activeSecurityScopes.removeAll()
+        for url in activeFileScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeFileScopes.removeAll()
         progress = 0
     }
 
     func prepareFiles(_ urls: [URL]) {
         clearPendingFiles()
-        var prepared: [PendingFile] = []
+        addPickedItems(urls)
+    }
+
+    func addPickedItems(_ urls: [URL]) {
+        var addedFiles = 0
+        var addedFolders = 0
+
         for source in urls {
-            let scoped = source.startAccessingSecurityScopedResource()
-            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
             do {
-                let name = source.lastPathComponent
-                let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: name)
-                try FileManager.default.copyItem(at: source, to: target)
-                let values = try target.resourceValues(forKeys: [.fileSizeKey])
-                prepared.append(PendingFile(url: target, name: name, size: Int64(values.fileSize ?? 0), relativePath: nil, isDirectory: false, rootFolderId: nil))
+                let values = try source.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey])
+                if values.isDirectory == true {
+                    addFolder(source)
+                    addedFolders += 1
+                    continue
+                }
+
+                guard values.isRegularFile == true else { continue }
+                if pendingFiles.contains(where: { $0.rootFolderId == nil && $0.url == source }) { continue }
+
+                let scoped = source.startAccessingSecurityScopedResource()
+                let item = PendingFile(
+                    url: source,
+                    name: source.lastPathComponent,
+                    size: Int64(values.fileSize ?? 0),
+                    relativePath: nil,
+                    isDirectory: false,
+                    rootFolderId: nil
+                )
+                pendingFiles.append(item)
+                if scoped { activeFileScopes[item.id] = source }
+                addedFiles += 1
             } catch {
-                status = "تعذر تجهيز ملف: \(source.lastPathComponent)"
+                status = "تعذر قراءة: \(source.lastPathComponent)"
             }
         }
-        pendingFiles = prepared
-        if !prepared.isEmpty { status = "تم اختيار \(prepared.count) ملف" }
+
+        if addedFiles > 0 || addedFolders > 0 {
+            status = "تمت إضافة \(addedFiles) ملف و\(addedFolders) مجلد"
+        }
     }
 
     func addFolder(_ folderURL: URL) {
