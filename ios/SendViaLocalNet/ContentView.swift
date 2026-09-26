@@ -99,14 +99,14 @@ struct ContentView: View {
             HStack {
                 Button { showImporter = true } label: { Label("ملف / ملفات", systemImage: "doc.badge.plus") }
                     .buttonStyle(.borderedProminent)
-                Button { showFolderImporter = true } label: { Label("مجلد", systemImage: "folder.badge.plus") }
+                Button { showFolderImporter = true } label: { Label("إرسال الكل", systemImage: "folder.fill.badge.plus") }
                     .buttonStyle(.bordered)
                 if !service.pendingFiles.isEmpty {
                     Button("مسح") { service.clearPendingFiles() }.buttonStyle(.bordered)
                 }
             }
             if service.pendingFiles.isEmpty {
-                Text("لم يتم اختيار ملفات بعد.").font(.subheadline).foregroundColor(.secondary)
+                Text("اختر ملفًا/ملفات، أو اختر «إرسال الكل» وحدد مجلدًا رئيسيًا لإرسال كل ما بداخله من ملفات ومجلدات فرعية.").font(.subheadline).foregroundColor(.secondary)
             } else {
                 ForEach(service.pendingFiles) { file in
                     HStack {
