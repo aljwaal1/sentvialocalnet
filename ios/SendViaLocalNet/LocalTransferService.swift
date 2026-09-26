@@ -49,6 +49,7 @@ final class LocalTransferService: ObservableObject {
     @Published var receiverRunning = false
     @Published var sending = false
     @Published var progress: Double = 0
+    @Published var transferMode: String = "copy"
 
     private let transferPort: UInt16 = 5051
     private let discoveryPort: UInt16 = 5052
@@ -304,21 +305,68 @@ final class LocalTransferService: ObservableObject {
                 await MainActor.run { UIApplication.shared.isIdleTimerDisabled = false }
                 return
             }
+
             var completed = 0
             var succeeded = 0
+            var itemSucceeded: [UUID: Bool] = Dictionary(uniqueKeysWithValues: files.map { ($0.id, true) })
             let total = max(1, targets.count * files.count)
+
             for device in targets {
                 for file in files {
-                    await MainActor.run { self.status = "إرسال \(file.name) إلى \(device.name)…" }
-                    if await self.send(file: file, to: device) { succeeded += 1 }
+                    await MainActor.run {
+                        self.status = "\(self.transferMode == "move" ? "نقل" : "نسخ") \(file.name) إلى \(device.name)…"
+                    }
+                    let ok = await self.send(file: file, to: device)
+                    if ok {
+                        succeeded += 1
+                    } else {
+                        itemSucceeded[file.id] = false
+                    }
                     completed += 1
                     await MainActor.run { self.progress = Double(completed) / Double(total) }
                 }
             }
+
+            var deletedCount = 0
+            var deleteFailed = 0
+            if self.transferMode == "move" {
+                // Loose files: delete only when the same file succeeded to all selected targets.
+                for file in files where file.rootFolderId == nil && !file.isDirectory {
+                    guard itemSucceeded[file.id] == true else { continue }
+                    do {
+                        try FileManager.default.removeItem(at: file.url)
+                        deletedCount += 1
+                    } catch {
+                        deleteFailed += 1
+                    }
+                }
+
+                // Selected folders: delete the root only when every item in that folder
+                // succeeded to every selected target.
+                for folder in self.selectedFolders where folder.selected {
+                    let folderItems = files.filter { $0.rootFolderId == folder.id }
+                    guard !folderItems.isEmpty, folderItems.allSatisfy({ itemSucceeded[$0.id] == true }) else { continue }
+                    do {
+                        try FileManager.default.removeItem(at: folder.url)
+                        deletedCount += 1
+                    } catch {
+                        deleteFailed += 1
+                    }
+                }
+            }
+
             await MainActor.run {
                 self.sending = false
                 UIApplication.shared.isIdleTimerDisabled = false
-                self.status = "انتهى الإرسال: نجح \(succeeded) من \(total)"
+                if self.transferMode == "move" {
+                    self.status = "انتهى النقل: نجح \(succeeded) من \(total) • حُذف الأصل: \(deletedCount)" +
+                        (deleteFailed > 0 ? " • تعذر حذف: \(deleteFailed)" : "")
+                    if deletedCount > 0 {
+                        self.clearPendingFiles()
+                    }
+                } else {
+                    self.status = "انتهى النسخ: نجح \(succeeded) من \(total)"
+                }
             }
         }
     }
