@@ -112,7 +112,10 @@ public class StableMainActivity extends Activity {
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
         LinearLayout hero = card(Color.rgb(67, 56, 202));
-        hero.addView(text("نقل محلي Pro", 25, Color.WHITE, true));
+        LinearLayout heroTitle = row();
+        heroTitle.addView(text("نقل محلي Pro", 25, Color.WHITE, true), new LinearLayout.LayoutParams(0, -2, 1));
+        heroTitle.addView(text("v2.1.2", 12, Color.rgb(224, 231, 255), true));
+        hero.addView(heroTitle);
         hero.addView(text("لا تقلق من تغيّر IP — التطبيق يحدّثه تلقائيًا", 13, Color.rgb(224, 231, 255), false));
         receiverState = text("جاري تشغيل الاستقبال...", 13, Color.rgb(209, 250, 229), true);
         receiverState.setPadding(0, dp(10), 0, 0);
