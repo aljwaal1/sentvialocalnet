@@ -25,7 +25,7 @@ import org.json.JSONObject;
 
 final class TransferReceiver {
     static final int PORT = 5051;
-    private static final int BUFFER_SIZE = 64 * 1024;
+    private static final int BUFFER_SIZE = 256 * 1024;
     private static final int SOCKET_TIMEOUT = 60000;
 
     interface Listener {
@@ -38,7 +38,7 @@ final class TransferReceiver {
     private final Context context;
     private final LocalDiscovery.NameProvider nameProvider;
     private final Listener listener;
-    private final ExecutorService clients = Executors.newFixedThreadPool(3);
+    private final ExecutorService clients = Executors.newFixedThreadPool(6);
     private volatile boolean running;
     private ServerSocket serverSocket;
     private PowerManager.WakeLock wakeLock;
@@ -75,6 +75,8 @@ final class TransferReceiver {
                     while (running) {
                         final Socket client = socket.accept();
                         client.setSoTimeout(SOCKET_TIMEOUT);
+                        client.setReceiveBufferSize(1024 * 1024);
+                        client.setTcpNoDelay(true);
                         clients.submit(new Runnable() {
                             @Override public void run() { handle(client); }
                         });
