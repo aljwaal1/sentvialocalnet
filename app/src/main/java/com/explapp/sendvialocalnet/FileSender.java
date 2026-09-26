@@ -16,6 +16,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,11 +32,22 @@ final class FileSender {
         void onDone(int succeeded, int failed);
     }
 
+    static final class SendItem {
+        final Uri uri;
+        final String relativePath;
+
+        SendItem(Uri uri, String relativePath) {
+            this.uri = uri;
+            this.relativePath = relativePath == null ? "" : relativePath;
+        }
+    }
+
     private static class FileInfo {
         String name;
         long size;
         Uri uri;
         File temporary;
+        String relativePath;
     }
 
     private final Context context;
@@ -48,16 +60,22 @@ final class FileSender {
     }
 
     void send(List<DeviceRecord> targets, List<Uri> files, final Listener listener) {
+        ArrayList<SendItem> items = new ArrayList<SendItem>();
+        for (Uri uri : files) items.add(new SendItem(uri, ""));
+        sendItems(targets, items, listener);
+    }
+
+    void sendItems(List<DeviceRecord> targets, List<SendItem> files, final Listener listener) {
         final int total = targets.size() * files.size();
         final AtomicInteger completed = new AtomicInteger();
         final AtomicInteger succeeded = new AtomicInteger();
         final AtomicInteger failed = new AtomicInteger();
 
         for (final DeviceRecord device : targets) {
-            for (final Uri uri : files) {
+            for (final SendItem item : files) {
                 pool.submit(new Runnable() {
                     @Override public void run() {
-                        boolean ok = sendOne(device, uri, listener);
+                        boolean ok = sendOne(device, item, listener);
                         if (ok) succeeded.incrementAndGet(); else failed.incrementAndGet();
                         int done = completed.incrementAndGet();
                         listener.onProgress(done, total, succeeded.get(), failed.get());
@@ -88,7 +106,8 @@ final class FileSender {
         pool.shutdownNow();
     }
 
-    private boolean sendOne(DeviceRecord device, Uri uri, Listener listener) {
+    private boolean sendOne(DeviceRecord device, SendItem item, Listener listener) {
+        Uri uri = item.uri;
         FileInfo info = null;
         HttpURLConnection connection = null;
         try {
@@ -102,6 +121,9 @@ final class FileSender {
             connection.setRequestProperty("Content-Type", "application/octet-stream");
             connection.setRequestProperty("X-File-Name", URLEncoder.encode(info.name, "UTF-8"));
             connection.setRequestProperty("X-File-Size", String.valueOf(info.size));
+            if (item.relativePath != null && item.relativePath.length() > 0) {
+                connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
+            }
             if (info.size <= Integer.MAX_VALUE) connection.setFixedLengthStreamingMode((int)info.size);
             else if (Build.VERSION.SDK_INT >= 19) connection.setFixedLengthStreamingMode(info.size);
             else throw new Exception("حجم الملف أكبر من الحد المدعوم");
