@@ -18,6 +18,7 @@ struct PendingFile: Identifiable, Hashable {
     let url: URL
     let name: String
     let size: Int64
+    let relativePath: String?
 }
 
 struct ReceivedFile: Identifiable, Hashable {
@@ -98,13 +99,50 @@ final class LocalTransferService: ObservableObject {
                 let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: name)
                 try FileManager.default.copyItem(at: source, to: target)
                 let values = try target.resourceValues(forKeys: [.fileSizeKey])
-                prepared.append(PendingFile(url: target, name: name, size: Int64(values.fileSize ?? 0)))
+                prepared.append(PendingFile(url: target, name: name, size: Int64(values.fileSize ?? 0), relativePath: nil))
             } catch {
                 status = "تعذر تجهيز ملف: \(source.lastPathComponent)"
             }
         }
         pendingFiles = prepared
         if !prepared.isEmpty { status = "تم اختيار \(prepared.count) ملف" }
+    }
+
+    func prepareFolder(_ folderURL: URL) {
+        clearPendingFiles()
+        let scoped = folderURL.startAccessingSecurityScopedResource()
+        defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
+
+        var prepared: [PendingFile] = []
+        let rootName = Self.safeFileName(folderURL.lastPathComponent)
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else {
+            status = "تعذر قراءة المجلد"
+            return
+        }
+
+        for case let source as URL in enumerator {
+            do {
+                let values = try source.resourceValues(forKeys: keys)
+                guard values.isRegularFile == true else { continue }
+                let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
+                let relativePath = rootName + "/" + rel.split(separator: "/").map { Self.safeFileName(String($0)) }.joined(separator: "/")
+                let name = Self.safeFileName(source.lastPathComponent)
+                let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
+                try FileManager.default.copyItem(at: source, to: target)
+                let copied = try target.resourceValues(forKeys: [.fileSizeKey])
+                prepared.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath))
+            } catch {
+                status = "تعذر تجهيز عنصر داخل المجلد: \(source.lastPathComponent)"
+            }
+        }
+
+        pendingFiles = prepared
+        status = prepared.isEmpty ? "المجلد لا يحتوي ملفات قابلة للإرسال" : "تم تجهيز مجلد يحتوي \(prepared.count) ملف"
     }
 
     func discover() {
@@ -171,6 +209,9 @@ final class LocalTransferService: ObservableObject {
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(file.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? file.name, forHTTPHeaderField: "X-File-Name")
         request.setValue(String(file.size), forHTTPHeaderField: "X-File-Size")
+        if let relativePath = file.relativePath, !relativePath.isEmpty {
+            request.setValue(relativePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? relativePath, forHTTPHeaderField: "X-Relative-Path")
+        }
         request.setValue(deviceId, forHTTPHeaderField: "X-SVLN-Sender-ID")
         request.setValue(deviceName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? deviceName, forHTTPHeaderField: "X-SVLN-Sender-Name")
         do {
@@ -264,7 +305,17 @@ final class LocalTransferService: ObservableObject {
         let decodedName = encodedName.removingPercentEncoding ?? encodedName
         let name = Self.safeFileName(decodedName)
         let expected = Int64(headers["x-file-size"] ?? headers["content-length"] ?? "") ?? -1
-        let folder = Self.receiveFolder()
+        var folder = Self.receiveFolder()
+        if let encodedRelative = headers["x-relative-path"], !encodedRelative.isEmpty {
+            let decodedRelative = encodedRelative.removingPercentEncoding ?? encodedRelative
+            let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map { Self.safeFileName(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+            if parts.count > 1 {
+                for component in parts.dropLast() {
+                    folder.appendPathComponent(component, isDirectory: true)
+                }
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+        }
         let destination = Self.uniqueURL(in: folder, name: name)
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         guard let handle = try? FileHandle(forWritingTo: destination) else { sendHTTP(connection, code: 500, body: "Cannot create file"); return }
@@ -318,7 +369,7 @@ final class LocalTransferService: ObservableObject {
         let reason: String
         switch code { case 200: reason = "OK"; case 204: reason = "No Content"; case 400: reason = "Bad Request"; case 404: reason = "Not Found"; case 405: reason = "Method Not Allowed"; default: reason = "Internal Server Error" }
         let data = Data(body.utf8)
-        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
+        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-Relative-Path,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
         var packet = Data(response.utf8); packet.append(data)
         connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
     }
