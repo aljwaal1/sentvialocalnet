@@ -323,7 +323,7 @@ class TransferHandler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy, X-Transfer-Offset")
 
     def _json(self, value: Any, status: int = 200) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -379,6 +379,8 @@ class TransferHandler(BaseHTTPRequestHandler):
             self._serve_file(web_root / "icon.svg", "image/svg+xml")
         elif path == "/upload":
             self._text(f"SVLN|{self.state.store.get_device_name()}|windows|{self.state.store.get_device_id()}")
+        elif path == "/api/resume-status":
+            self._handle_resume_status(query)
         elif path == "/api/info":
             self._json({
                 "name": self.state.store.get_device_name(),
@@ -434,6 +436,45 @@ class TransferHandler(BaseHTTPRequestHandler):
         device = self.state.register(device_id, str(data.get("name") or "iPhone / Web"), str(data.get("type") or "web"))
         self._json({"ok": True, "device": device})
 
+    def _resolve_receive_target(self, filename: str, relative: str) -> Tuple[Path, str]:
+        base_dir = downloads_dir()
+        if relative:
+            raw_parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+            parts = [safe_filename(part) for part in raw_parts]
+            if len(parts) > 1:
+                base_dir = base_dir.joinpath(*parts[:-1])
+                filename = parts[-1]
+            elif len(parts) == 1:
+                filename = parts[0]
+        filename = safe_filename(filename)
+        return base_dir / filename, filename
+
+    def _handle_resume_status(self, query: Dict[str, List[str]]) -> None:
+        try:
+            filename = urllib.parse.unquote(query.get("filename", [""])[0])
+            relative = urllib.parse.unquote(query.get("relative", [""])[0])
+            total = int(query.get("size", ["0"])[0] or 0)
+            target, _ = self._resolve_receive_target(filename, relative)
+            part = target.with_name(target.name + ".svln.part")
+
+            completed = target.exists() and (total <= 0 or target.stat().st_size == total)
+            offset = 0
+            if not completed and part.exists():
+                offset = part.stat().st_size
+                if total > 0 and offset > total:
+                    part.unlink(missing_ok=True)
+                    offset = 0
+            self._json({
+                "ok": True,
+                "offset": offset,
+                "completed": completed,
+                "filename": target.name,
+            })
+        except ValueError as exc:
+            self._json({"ok": False, "error": str(exc), "code": "INVALID_NAME"}, 422)
+        except Exception as exc:
+            self._json({"ok": False, "error": str(exc)}, 500)
+
     def _handle_direct_upload(self) -> None:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length < 0:
@@ -449,68 +490,73 @@ class TransferHandler(BaseHTTPRequestHandler):
         if conflict not in ("skip", "overwrite", "cancel"):
             conflict = "skip"
 
-        base_dir = downloads_dir()
-
         try:
             if entry_type == "directory":
-                raw_parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
-                parts = [safe_filename(part) for part in raw_parts]
-                target_dir = base_dir.joinpath(*parts) if parts else base_dir / safe_filename(filename)
+                target_dir, _ = self._resolve_receive_target(filename, relative)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 self.state.event_queue.put(("log", f"تم إنشاء المجلد {target_dir}"))
                 self._json({"ok": True, "directory": str(target_dir)})
                 return
 
-            if relative:
-                raw_parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
-                parts = [safe_filename(part) for part in raw_parts]
-                if len(parts) > 1:
-                    base_dir = base_dir.joinpath(*parts[:-1])
-                    base_dir.mkdir(parents=True, exist_ok=True)
-                    filename = parts[-1]
-                elif len(parts) == 1:
-                    filename = parts[0]
-
-            filename = safe_filename(filename)
-            target = base_dir / filename
+            target, filename = self._resolve_receive_target(filename, relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            total_size = int(self.headers.get("X-File-Size", str(length)) or length)
+            offset_header = self.headers.get("X-Transfer-Offset")
+            resumable = offset_header is not None
+            offset = int(offset_header or 0)
 
             if target.exists():
                 if conflict == "skip":
-                    # Consume request body so the connection closes cleanly.
                     remaining = length
                     while remaining > 0:
                         chunk = self.rfile.read(min(BUFFER_SIZE, remaining))
                         if not chunk:
                             break
                         remaining -= len(chunk)
-                    self._json({"ok": True, "skipped": True, "filename": target.name, "reason": "exists"})
+                    self._json({"ok": True, "skipped": True, "completed": True, "filename": target.name, "received": total_size})
                     return
                 if conflict == "cancel":
                     self._json({"ok": False, "error": "الملف موجود مسبقًا", "filename": target.name}, 409)
                     return
-                # overwrite: keep exact same name and replace only after complete receive.
 
             temp = target.with_name(target.name + ".svln.part")
+            current = temp.stat().st_size if temp.exists() else 0
+
+            if resumable:
+                if offset != current:
+                    self._json({"ok": False, "error": "OFFSET_MISMATCH", "received": current}, 409)
+                    return
+                mode = "ab"
+            else:
+                offset = 0
+                mode = "wb"
+
             remaining = length
-            with temp.open("wb") as output:
+            with temp.open(mode) as output:
                 while remaining > 0:
                     chunk = self.rfile.read(min(BUFFER_SIZE, remaining))
                     if not chunk:
                         raise IOError("انقطع الإرسال")
                     output.write(chunk)
                     remaining -= len(chunk)
+
+            received = temp.stat().st_size
+            if total_size > 0 and received < total_size:
+                self._json({"ok": True, "partial": True, "received": received, "filename": target.name})
+                return
+            if total_size > 0 and received > total_size:
+                self._json({"ok": False, "error": "حجم الملف المستلم أكبر من المتوقع", "received": received}, 409)
+                return
+
             if target.exists():
                 target.unlink()
             temp.replace(target)
             self.state.event_queue.put(("received", str(target)))
-            self._json({"ok": True, "filename": target.name, "size": length})
+            self._json({"ok": True, "completed": True, "received": received, "filename": target.name, "size": received})
         except ValueError as exc:
             self._json({"ok": False, "error": str(exc), "code": "INVALID_NAME"}, 422)
         except Exception as exc:
-            try:
-                temp.unlink(missing_ok=True)
-            except Exception:
-                pass
+            # Keep .svln.part for resume after Wi-Fi/app interruption.
             self._json({"ok": False, "error": str(exc)}, 500)
 
     def _handle_hub_upload(self, parsed: urllib.parse.ParseResult) -> None:
