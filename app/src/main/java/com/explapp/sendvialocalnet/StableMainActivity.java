@@ -3,6 +3,7 @@ package com.explapp.sendvialocalnet;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
+import android.database.Cursor;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -11,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -32,9 +34,10 @@ import java.util.Set;
 
 public class StableMainActivity extends Activity {
     private static final int PICK_FILES = 1401;
+    private static final int PICK_FOLDER = 1402;
 
     private final ArrayList<DeviceRecord> devices = new ArrayList<DeviceRecord>();
-    private final ArrayList<Uri> files = new ArrayList<Uri>();
+    private final ArrayList<FileSender.SendItem> files = new ArrayList<FileSender.SendItem>();
     private DeviceStore store;
     private DeviceScanner scanner;
     private TransferReceiver receiver;
@@ -147,11 +150,13 @@ public class StableMainActivity extends Activity {
         }});
 
         LinearLayout sendCard = card(Color.WHITE);
-        sendCard.addView(title("2. اختر الملفات", "يمكن اختيار عدة ملفات وإرسالها لعدة أجهزة"));
+        sendCard.addView(title("2. اختر الملفات أو المجلدات", "أضف ملفًا أو عدة ملفات أو مجلدًا كاملًا، ويمكن إضافة أكثر من مجلد"));
         LinearLayout fileButtons = row();
-        Button choose = button("اختيار الملفات", Color.rgb(14, 165, 233), Color.WHITE);
+        Button choose = button("اختيار ملفات", Color.rgb(14, 165, 233), Color.WHITE);
+        Button chooseFolder = button("إضافة مجلد", Color.rgb(79, 70, 229), Color.WHITE);
         Button clearFiles = button("مسح", Color.rgb(248, 250, 252), Color.rgb(71, 84, 103));
-        fileButtons.addView(choose, weight(3, 5));
+        fileButtons.addView(choose, weight(2, 5));
+        fileButtons.addView(chooseFolder, weight(2, 5));
         fileButtons.addView(clearFiles, weight(1, 0));
         sendCard.addView(fileButtons);
         fileSummary = info("لم يتم اختيار ملفات");
@@ -170,6 +175,7 @@ public class StableMainActivity extends Activity {
         root.addView(sendCard, bottom(11));
 
         choose.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { chooseFiles(); }});
+        chooseFolder.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { chooseFolder(); }});
         clearFiles.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { files.clear(); renderFiles(); }});
         sendButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { sendFiles(); }});
 
@@ -318,26 +324,120 @@ public class StableMainActivity extends Activity {
         startActivityForResult(Intent.createChooser(intent, "اختر الملفات"), PICK_FILES);
     }
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_FILES || resultCode != RESULT_OK || data == null) return;
-        Set<String> seen = new LinkedHashSet<String>();
-        for (Uri u : files) seen.add(u.toString());
-        ClipData clip = data.getClipData();
-        if (clip != null) for (int i = 0; i < clip.getItemCount(); i++) addUri(clip.getItemAt(i).getUri(), seen);
-        else addUri(data.getData(), seen);
-        renderFiles();
+    private void chooseFolder() {
+        if (Build.VERSION.SDK_INT < 21) {
+            toast("اختيار المجلدات يحتاج Android 5 أو أحدث");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, PICK_FOLDER);
     }
 
-    private void addUri(Uri uri, Set<String> seen) {
-        if (uri == null || !seen.add(uri.toString())) return;
-        files.add(uri);
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+
+        if (requestCode == PICK_FILES) {
+            Set<String> seen = new LinkedHashSet<String>();
+            for (FileSender.SendItem item : files) seen.add(item.uri.toString() + "|" + item.relativePath);
+            ClipData clip = data.getClipData();
+            if (clip != null) {
+                for (int i = 0; i < clip.getItemCount(); i++) addFileUri(clip.getItemAt(i).getUri(), "", seen);
+            } else {
+                addFileUri(data.getData(), "", seen);
+            }
+            renderFiles();
+            return;
+        }
+
+        if (requestCode == PICK_FOLDER && Build.VERSION.SDK_INT >= 21) {
+            Uri tree = data.getData();
+            if (tree == null) return;
+            try {
+                getContentResolver().takePersistableUriPermission(tree,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            } catch (Exception ignored) {}
+            String rootName = queryDisplayName(tree);
+            if (rootName == null || rootName.length() == 0) rootName = "Folder";
+            Set<String> seen = new LinkedHashSet<String>();
+            for (FileSender.SendItem item : files) seen.add(item.uri.toString() + "|" + item.relativePath);
+            int before = files.size();
+            addTreeRecursive(tree, DocumentsContract.getTreeDocumentId(tree), rootName, seen);
+            renderFiles();
+            toast("تمت إضافة المجلد: " + rootName + " (" + (files.size() - before) + " ملف)");
+        }
+    }
+
+    private void addFileUri(Uri uri, String relativePath, Set<String> seen) {
+        if (uri == null) return;
+        String key = uri.toString() + "|" + relativePath;
+        if (!seen.add(key)) return;
+        files.add(new FileSender.SendItem(uri, relativePath));
         try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         catch (Exception ignored) {}
     }
 
+    private void addTreeRecursive(Uri treeUri, String parentDocumentId, String relativeDir, Set<String> seen) {
+        if (Build.VERSION.SDK_INT < 21) return;
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(children,
+                    new String[] {
+                            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                            DocumentsContract.Document.COLUMN_MIME_TYPE
+                    }, null, null, null);
+            if (cursor == null) return;
+            int idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+            int mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+            while (cursor.moveToNext()) {
+                String documentId = idIndex >= 0 ? cursor.getString(idIndex) : null;
+                String name = nameIndex >= 0 ? cursor.getString(nameIndex) : "item";
+                String mime = mimeIndex >= 0 ? cursor.getString(mimeIndex) : "";
+                if (documentId == null) continue;
+                Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    addTreeRecursive(treeUri, documentId, relativeDir + "/" + safePathPart(name), seen);
+                } else {
+                    addFileUri(documentUri, relativeDir + "/" + safePathPart(name), seen);
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+    }
+
+    private String queryDisplayName(Uri uri) {
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(uri,
+                    new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME }, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return uri == null ? "" : uri.getLastPathSegment();
+    }
+
+    private String safePathPart(String value) {
+        if (value == null || value.trim().length() == 0) return "item";
+        return value.replace("/", "_").replace("\\", "_").replace(":", "_");
+    }
+
     private void renderFiles() {
-        fileSummary.setText(files.isEmpty() ? "لم يتم اختيار ملفات" : "تم اختيار " + files.size() + " ملف");
+        if (files.isEmpty()) {
+            fileSummary.setText("لم يتم اختيار ملفات أو مجلدات");
+        } else {
+            int folderFiles = 0;
+            for (FileSender.SendItem item : files) if (item.relativePath != null && item.relativePath.length() > 0) folderFiles++;
+            fileSummary.setText("الإجمالي: " + files.size() + " ملف" + (folderFiles > 0 ? " • من مجلدات: " + folderFiles : ""));
+        }
         int selected = 0;
         synchronized (devices) { for (DeviceRecord d : devices) if (d.selected) selected++; }
         sendButton.setEnabled(selected > 0 && !files.isEmpty());
@@ -346,10 +446,10 @@ public class StableMainActivity extends Activity {
     private void sendFiles() {
         final ArrayList<DeviceRecord> targets = new ArrayList<DeviceRecord>();
         synchronized (devices) { for (DeviceRecord d : devices) if (d.selected) targets.add(d); }
-        if (targets.isEmpty() || files.isEmpty()) { toast("حدد جهازًا واختر الملفات"); return; }
+        if (targets.isEmpty() || files.isEmpty()) { toast("حدد جهازًا واختر ملفات أو مجلدات"); return; }
         sendButton.setEnabled(false);
         progress.setProgress(0);
-        sender.send(targets, new ArrayList<Uri>(files), new FileSender.Listener() {
+        sender.sendItems(targets, new ArrayList<FileSender.SendItem>(files), new FileSender.Listener() {
             @Override public void onProgress(final int done, final int total, final int ok, final int failed) {
                 runOnUiThread(new Runnable() { @Override public void run() {
                     progress.setProgress(done * 100 / Math.max(1, total));
