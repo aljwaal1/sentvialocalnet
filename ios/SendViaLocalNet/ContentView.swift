@@ -20,6 +20,11 @@ struct ContentView: View {
             }
             .navigationTitle("نقل محلي Pro")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Text("v2.1.2")
+                        .font(.caption.bold())
+                        .foregroundColor(.secondary)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { service.discover() } label: { Image(systemName: "arrow.clockwise") }
                 }
