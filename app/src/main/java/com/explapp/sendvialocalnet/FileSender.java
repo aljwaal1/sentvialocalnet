@@ -35,10 +35,16 @@ final class FileSender {
     static final class SendItem {
         final Uri uri;
         final String relativePath;
+        final boolean directory;
 
         SendItem(Uri uri, String relativePath) {
+            this(uri, relativePath, false);
+        }
+
+        SendItem(Uri uri, String relativePath, boolean directory) {
             this.uri = uri;
             this.relativePath = relativePath == null ? "" : relativePath;
+            this.directory = directory;
         }
     }
 
@@ -111,6 +117,31 @@ final class FileSender {
         FileInfo info = null;
         HttpURLConnection connection = null;
         try {
+            if (item.directory) {
+                String folderName = item.relativePath;
+                int slash = folderName.lastIndexOf('/');
+                if (slash >= 0 && slash + 1 < folderName.length()) folderName = folderName.substring(slash + 1);
+                if (folderName.length() == 0) folderName = "folder";
+                listener.onLog("جاري إرسال المجلد " + item.relativePath + " إلى " + device.name);
+                connection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(30000);
+                connection.setDoOutput(true);
+                connection.setRequestMethod("POST");
+                connection.setRequestProperty("Content-Type", "application/octet-stream");
+                connection.setRequestProperty("X-File-Name", URLEncoder.encode(folderName, "UTF-8"));
+                connection.setRequestProperty("X-File-Size", "0");
+                connection.setRequestProperty("X-Relative-Path", URLEncoder.encode(item.relativePath, "UTF-8"));
+                connection.setRequestProperty("X-Entry-Type", "directory");
+                connection.setFixedLengthStreamingMode(0);
+                OutputStream empty = connection.getOutputStream();
+                empty.close();
+                int code = connection.getResponseCode();
+                boolean ok = code >= 200 && code < 300;
+                listener.onLog((ok ? "تم إرسال المجلد " : "فشل إرسال المجلد ") + item.relativePath + " إلى " + device.name);
+                return ok;
+            }
+
             info = prepare(uri);
             listener.onLog("جاري إرسال " + info.name + " إلى " + device.name);
             connection = (HttpURLConnection)new URL("http://" + device.ip + ":" + PORT + "/upload").openConnection();
