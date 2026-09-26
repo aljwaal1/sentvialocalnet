@@ -42,9 +42,13 @@ POST /upload
 Content-Type: application/octet-stream
 X-File-Name: encoded-file-name
 X-File-Size: file-size
+X-Relative-Path: optional/relative/path
+X-Entry-Type: file | directory
 ```
 
 المنفذ: `5051`.
+
+عند نقل المجلدات ترسل النسخ Native إدخالات المجلد نفسها بالإضافة إلى الملفات، لذلك يتم الحفاظ على **المجلدات الفارغة** أيضًا. واجهة المتصفح/PWA تستطيع الحفاظ على بنية المجلدات التي تحتوي ملفات، لكن متصفحات الويب لا تكشف المجلدات الفارغة بشكل موثوق.
 
 ### اكتشاف الأجهزة
 
