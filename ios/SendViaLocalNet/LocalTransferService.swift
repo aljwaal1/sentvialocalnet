@@ -106,6 +106,9 @@ final class LocalTransferService: ObservableObject {
         if discoveryFD >= 0 { Darwin.close(discoveryFD) }
         for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
         activeSecurityScopes.removeAll()
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
     }
 
     func toggleDevice(_ id: String) {
@@ -253,8 +256,7 @@ final class LocalTransferService: ObservableObject {
         guard !targets.isEmpty else { status = "حدد جهازًا واحدًا على الأقل"; return }
         guard !pendingFiles.isEmpty else { status = "اختر ملفًا واحدًا على الأقل"; return }
         guard !sending else { return }
-        sending = true
-        progress = 0
+
         let enabledFolderIds = Set(selectedFolders.filter { $0.selected }.map(\.id))
         let files = pendingFiles.filter { item in
             guard let rootId = item.rootFolderId else { return true }
@@ -264,8 +266,16 @@ final class LocalTransferService: ObservableObject {
             status = "حدد مجلدًا واحدًا على الأقل أو اختر ملفات"
             return
         }
+
+        sending = true
+        progress = 0
+        UIApplication.shared.isIdleTimerDisabled = true
+
         Task { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                await MainActor.run { UIApplication.shared.isIdleTimerDisabled = false }
+                return
+            }
             var completed = 0
             var succeeded = 0
             let total = max(1, targets.count * files.count)
@@ -279,6 +289,7 @@ final class LocalTransferService: ObservableObject {
             }
             await MainActor.run {
                 self.sending = false
+                UIApplication.shared.isIdleTimerDisabled = false
                 self.status = "انتهى الإرسال: نجح \(succeeded) من \(total)"
             }
         }
