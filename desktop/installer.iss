@@ -1,5 +1,5 @@
 #define MyAppName "نقل محلي Pro"
-#define MyAppVersion "2.1.5"
+#define MyAppVersion "2.1.6"
 #define MyAppPublisher "SendViaLocalNet"
 #define MyAppExeName "SendViaLocalNet.exe"
 
@@ -9,7 +9,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=2.1.5.0
+VersionInfoVersion=2.1.6.0
 DefaultDirName={autopf}\SendViaLocalNet
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -35,6 +35,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "إنشاء اختصار على سطح المكتب"; GroupDescription: "اختصارات إضافية:"; Flags: unchecked
 Name: "startup"; Description: "تشغيل الاستقبال تلقائيًا عند تسجيل الدخول"; GroupDescription: "التشغيل التلقائي:"; Flags: unchecked
+
+[InstallDelete]
+; Clean every file from the previous installed version before copying the new one.
+; Persistent settings/transfers are stored in %APPDATA% and are NOT deleted.
+Type: filesandordirs; Name: "{app}\*"
 
 [Files]
 Source: "dist\SendViaLocalNet.exe"; DestDir: "{app}"; Flags: ignoreversion
