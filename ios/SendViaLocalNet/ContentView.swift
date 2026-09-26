@@ -29,10 +29,10 @@ struct ContentView: View {
                 case .failure(let error): service.status = "تعذر اختيار الملفات: \(error.localizedDescription)"
                 }
             }
-            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: true) { result in
+            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
                 switch result {
                 case .success(let urls):
-                    service.prepareFolders(urls)
+                    if let folder = urls.first { service.addFolder(folder) }
                 case .failure(let error): service.status = "تعذر اختيار المجلد: \(error.localizedDescription)"
                 }
             }
@@ -100,14 +100,17 @@ struct ContentView: View {
             HStack {
                 Button { showImporter = true } label: { Label("ملف / ملفات", systemImage: "doc.badge.plus") }
                     .buttonStyle(.borderedProminent)
-                Button { showFolderImporter = true } label: { Label("مجلدات / إرسال الكل", systemImage: "folder.fill.badge.plus") }
+                Button { showFolderImporter = true } label: { Label("إضافة مجلد", systemImage: "folder.fill.badge.plus") }
                     .buttonStyle(.bordered)
                 if !service.pendingFiles.isEmpty {
                     Button("مسح") { service.clearPendingFiles() }.buttonStyle(.bordered)
                 }
             }
             if service.pendingFiles.isEmpty {
-                Text("اختر ملفًا/ملفات، أو اختر «مجلدات / إرسال الكل» وحدد مجلدًا واحدًا أو عدة مجلدات لإرسال كل ما بداخلها مع المجلدات الفرعية.").font(.subheadline).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("لإرسال مجلد على iPhone: افتح المجلد المطلوب داخل نافذة Files ثم اضغط الزر الأزرق «Open» بالأعلى.").font(.subheadline).foregroundColor(.secondary)
+                    Text("لإضافة أكثر من مجلد: اضغط «إضافة مجلد» مرة أخرى بعد اختيار الأول.").font(.caption).foregroundColor(.secondary)
+                }
             } else {
                 ForEach(service.pendingFiles) { file in
                     HStack {
