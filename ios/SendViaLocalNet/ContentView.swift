@@ -108,23 +108,49 @@ struct ContentView: View {
             }
             if service.pendingFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("لإرسال مجلد على iPhone: افتح المجلد المطلوب داخل نافذة Files ثم اضغط الزر الأزرق «Open» بالأعلى.").font(.subheadline).foregroundColor(.secondary)
-                    Text("لإضافة أكثر من مجلد: اضغط «إضافة مجلد» مرة أخرى بعد اختيار الأول.").font(.caption).foregroundColor(.secondary)
+                    Text("اضغط «إضافة مجلد»، ادخل إلى المجلد المطلوب في Files ثم اضغط Open. سيظهر بعدها هنا كخيار قابل للتحديد ✓.").font(.subheadline).foregroundColor(.secondary)
+                    Text("كرر «إضافة مجلد» لإضافة مجلدات أخرى، ثم حدد ما تريد إرساله بعلامة ✓.").font(.caption).foregroundColor(.secondary)
                 }
             } else {
-                ForEach(service.pendingFiles) { file in
-                    HStack {
-                        Image(systemName: file.isDirectory ? "folder.fill" : "doc")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(file.name).lineLimit(1)
-                            if let path = file.relativePath {
-                                Text(path).font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                if !service.selectedFolders.isEmpty {
+                    Text("المجلدات المختارة").font(.subheadline).fontWeight(.semibold)
+                    ForEach(service.selectedFolders) { folder in
+                        HStack(spacing: 10) {
+                            Button { service.toggleFolder(folder.id) } label: {
+                                Image(systemName: folder.selected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(folder.selected ? .accentColor : .secondary)
+                                    .font(.title3)
                             }
+                            .buttonStyle(.plain)
+                            Image(systemName: "folder.fill").foregroundColor(.accentColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(folder.name).fontWeight(.semibold).lineLimit(1)
+                                Text("\(folder.itemCount) عنصر").font(.caption).foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) { service.removeFolder(folder.id) } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.plain)
                         }
-                        Spacer()
-                        Text(file.isDirectory ? "مجلد" : formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
+                        .padding(.vertical, 4)
+                        Divider()
                     }
                 }
+
+                let looseFiles = service.pendingFiles.filter { $0.rootFolderId == nil }
+                if !looseFiles.isEmpty {
+                    Text("الملفات").font(.subheadline).fontWeight(.semibold)
+                    ForEach(looseFiles) { file in
+                        HStack {
+                            Image(systemName: "doc")
+                            Text(file.name).lineLimit(1)
+                            Spacer()
+                            Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+
                 Button { service.sendSelected() } label: {
                     Label(service.sending ? "جاري الإرسال…" : "إرسال إلى الأجهزة المحددة", systemImage: "paperplane.fill")
                         .frame(maxWidth: .infinity)
