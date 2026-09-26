@@ -127,6 +127,25 @@ final class TransferReceiver {
             File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "SendViaLocalNet");
             if (!directory.exists() && !directory.mkdirs()) throw new Exception("تعذر إنشاء مجلد التنزيل");
             String relative = headerValue(header, "X-Relative-Path");
+            String entryType = headerValue(header, "X-Entry-Type");
+            if (entryType != null && "directory".equalsIgnoreCase(entryType.trim())) {
+                if (relative != null && relative.length() > 0) {
+                    try { relative = URLDecoder.decode(relative, "UTF-8"); } catch (Exception ignored) {}
+                    String[] dirParts = relative.replace("\\", "/").split("/");
+                    File targetDir = directory;
+                    for (String raw : dirParts) {
+                        String part = safeFilename(raw);
+                        if (part.length() == 0 || ".".equals(part) || "..".equals(part)) continue;
+                        targetDir = new File(targetDir, part);
+                    }
+                    if (!targetDir.exists() && !targetDir.mkdirs()) throw new Exception("تعذر إنشاء المجلد");
+                    writeResponse(socket, "200 OK", "OK");
+                    listener.onLog("تم إنشاء المجلد " + targetDir.getPath());
+                    return;
+                }
+                writeResponse(socket, "200 OK", "OK");
+                return;
+            }
             if (relative != null && relative.length() > 0) {
                 try { relative = URLDecoder.decode(relative, "UTF-8"); } catch (Exception ignored) {}
                 String[] parts = relative.replace("\\", "/").split("/");
@@ -216,7 +235,7 @@ final class TransferReceiver {
         String headers = "HTTP/1.1 " + status + "\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Access-Control-Allow-Methods: POST, OPTIONS, GET\r\n" +
-                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path\r\n" +
+                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type\r\n" +
                 "Content-Type: text/plain; charset=utf-8\r\n" +
                 "Content-Length: " + data.length + "\r\nConnection: close\r\n\r\n";
         output.write(headers.getBytes("UTF-8"));
