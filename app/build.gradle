@@ -29,8 +29,8 @@ android {
         applicationId 'com.explapp.sendvialocalnet'
         minSdk 19
         targetSdk 28
-        versionCode 11
-        versionName '2.1.7'
+        versionCode 12
+        versionName '2.1.8'
     }
 
     buildTypes {
