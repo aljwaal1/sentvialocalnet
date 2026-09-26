@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.2</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.3</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -106,7 +106,15 @@ async function postRawLegacy(url,file){
 
 async function postRaw(base,file){
   const chunkSize=50*1024*1024;
+  const fastThreshold=8*1024*1024;
   const rp=relPath(file);
+
+  // Thousands of small files are much faster with one POST and retry,
+  // avoiding 2-3 resume-status requests for every tiny file.
+  if(file.size<fastThreshold){
+    return postRawLegacy(base+'/upload',file);
+  }
+
   let state=await getResumeState(base,file);
 
   // Older receiver: keep backward compatibility.
@@ -174,51 +182,69 @@ async function postRaw(base,file){
 async function sendFiles(){
   if(!selected.size){toast('حدد جهازًا واحدًا على الأقل');return}
   if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}
+
   await keepScreenAwake();
-  $('status').textContent='جاري الإرسال...\nتم تفعيل إبقاء الشاشة مستيقظة، والنقل يستكمل من آخر جزء محفوظ عند الانقطاع.';
   const direct=[...selected].filter(k=>k.startsWith('direct:')).map(k=>k.slice(7));
   const hub=[...selected].filter(k=>k.startsWith('hub:')).map(k=>k.slice(4));
   const toWindows=selected.has('windows');
-  const total=files.length*((toWindows?1:0)+direct.length+(hub.length?1:0));
-  let done=0,ok=0,fail=0;
-  const failed=[];
-  $('progress').style.width='0%';
-  try{
-    for(const file of files){
-      const jobs=[];
-      if(toWindows)jobs.push({name:file.name,promise:postRaw('',file)});
-      for(const ip of direct)jobs.push({name:file.name,promise:postRaw('http://'+ip+':5051',file)});
-      if(hub.length){
+
+  const tasks=[];
+  for(const file of files){
+    if(toWindows)tasks.push({name:file.name,run:()=>postRaw('',file)});
+    for(const ip of direct)tasks.push({name:file.name,run:()=>postRaw('http://'+ip+':5051',file)});
+    if(hub.length){
+      tasks.push({name:file.name,run:async()=>{
         const sender=encodeURIComponent(localStorage.getItem(NAME_KEY)||'جهاز ويب');
         const url='/api/hub-upload?recipients='+encodeURIComponent(hub.join(','))+'&filename='+encodeURIComponent(file.name)+'&sender_name='+sender;
-        const p=(async()=>{
-          let lastError='';
-          for(let attempt=1;attempt<=3;attempt++){
-            try{
-              const rr=await fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
-              if(rr.ok)return true;
-              lastError='HTTP '+rr.status;
-            }catch(e){lastError=e&&e.message?e.message:String(e)}
-            await new Promise(resolve=>setTimeout(resolve,500*attempt));
-          }
-          throw new Error(lastError||'فشل الرفع');
-        })();
-        jobs.push({name:file.name,promise:p});
-      }
-      for(const job of jobs){
-        try{await job.promise;ok++}
-        catch(e){fail++;failed.push(job.name+' — '+(e&&e.message?e.message:String(e)))}
-        done++;
-        $('progress').style.width=Math.round(done/Math.max(1,total)*100)+'%';
-        $('status').textContent='جاري الإرسال...\nاكتمل '+done+' من '+total+'\nنجح: '+ok+' | فشل: '+fail+(failed.length?'\nآخر فشل: '+failed[failed.length-1]:'');
-      }
+        let lastError='';
+        for(let attempt=1;attempt<=3;attempt++){
+          try{
+            const rr=await fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+            if(rr.ok)return true;
+            lastError='HTTP '+rr.status;
+          }catch(e){lastError=e&&e.message?e.message:String(e)}
+          await new Promise(resolve=>setTimeout(resolve,400*attempt));
+        }
+        throw new Error(lastError||'فشل الرفع');
+      }});
     }
+  }
+
+  const total=tasks.length;
+  let next=0,done=0,ok=0,fail=0;
+  const failed=[];
+  const workerCount=Math.min(6,Math.max(1,total));
+  $('progress').style.width='0%';
+  $('status').textContent='وضع Turbo يعمل ⚡\nحتى 6 ملفات بالتوازي.\nالملفات الكبيرة تستكمل من آخر جزء محفوظ.';
+
+  async function worker(){
+    while(true){
+      const index=next++;
+      if(index>=total)return;
+      const task=tasks[index];
+      try{
+        await task.run();
+        ok++;
+      }catch(e){
+        fail++;
+        failed.push(task.name+' — '+(e&&e.message?e.message:String(e)));
+      }
+      done++;
+      $('progress').style.width=Math.round(done/Math.max(1,total)*100)+'%';
+      $('status').textContent='وضع Turbo ⚡\nاكتمل '+done+' من '+total+'\nنجح: '+ok+' | فشل: '+fail+(failed.length?'\nآخر فشل: '+failed[failed.length-1]:'');
+    }
+  }
+
+  try{
+    await Promise.all(Array.from({length:workerCount},()=>worker()));
   }finally{
     await releaseScreenAwake();
   }
+
   $('status').textContent='انتهى الإرسال.\nنجح: '+ok+'\nفشل: '+fail+(failed.length?'\n\nآخر الملفات الفاشلة:\n'+failed.slice(-8).join('\n'):'');
   toast(fail?'انتهى مع بعض الأخطاء':'تم الإرسال بنجاح');
 }
+
 async function loadInbox(){try{const r=await fetch('/api/inbox/'+encodeURIComponent(myId));const d=await r.json(),arr=d.files||[];$('inboxCount').textContent=arr.length;$('inbox').innerHTML=arr.length?arr.map(f=>`<div class="incoming"><div class="ico">📥</div><div style="min-width:0"><div class="name">${esc(f.filename)}</div><div class="sub">من ${esc(f.sender_name)} • ${fmt(f.size)}</div></div><a class="download" href="/api/download/${encodeURIComponent(f.id)}/${encodeURIComponent(myId)}" onclick="setTimeout(loadInbox,1500)">تنزيل</a></div>`).join(''):'<div class="empty">لا توجد ملفات واردة حاليًا.</div>'}catch{$('inbox').innerHTML='<div class="empty">تعذر تحميل الملفات الواردة.</div>'}}function showTab(t){for(const n of ['send','receive','help']){$(n+'Panel').classList.toggle('active',n===t);$(n+'Tab').classList.toggle('active',n===t)}if(t==='receive')loadInbox()}$('singleInput').addEventListener('change',e=>addFiles([...e.target.files]));$('fileInput').addEventListener('change',e=>addFiles([...e.target.files]));$('folderInput').addEventListener('change',e=>addFiles([...e.target.files]));const dz=$('dropZone');['dragenter','dragover'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.add('drag')}));['dragleave','drop'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.remove('drag')}));dz.addEventListener('drop',e=>addFiles([...e.dataTransfer.files]));loadLocal();register();loadInbox();setInterval(()=>{heartbeat();loadHubDevices();loadInbox()},5000);if('caches' in window){caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{})}
 if('serviceWorker' in navigator){
   navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(reg=>reg.update())).catch(()=>{});
