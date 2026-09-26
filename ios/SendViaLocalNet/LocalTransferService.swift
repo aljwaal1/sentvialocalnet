@@ -108,41 +108,48 @@ final class LocalTransferService: ObservableObject {
         if !prepared.isEmpty { status = "تم اختيار \(prepared.count) ملف" }
     }
 
-    func prepareFolder(_ folderURL: URL) {
+    func prepareFolders(_ folderURLs: [URL]) {
         clearPendingFiles()
-        let scoped = folderURL.startAccessingSecurityScopedResource()
-        defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
-
         var prepared: [PendingFile] = []
-        let rootName = Self.safeFileName(folderURL.lastPathComponent)
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: folderURL,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles]
-        ) else {
-            status = "تعذر قراءة المجلد"
-            return
-        }
 
-        for case let source as URL in enumerator {
-            do {
-                let values = try source.resourceValues(forKeys: keys)
-                guard values.isRegularFile == true else { continue }
-                let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
-                let relativePath = rootName + "/" + rel.split(separator: "/").map { Self.safeFileName(String($0)) }.joined(separator: "/")
-                let name = Self.safeFileName(source.lastPathComponent)
-                let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
-                try FileManager.default.copyItem(at: source, to: target)
-                let copied = try target.resourceValues(forKeys: [.fileSizeKey])
-                prepared.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath))
-            } catch {
-                status = "تعذر تجهيز عنصر داخل المجلد: \(source.lastPathComponent)"
+        for folderURL in folderURLs {
+            let scoped = folderURL.startAccessingSecurityScopedResource()
+            defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
+
+            let rootName = Self.safeFileName(folderURL.lastPathComponent)
+            let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
+            guard let enumerator = FileManager.default.enumerator(
+                at: folderURL,
+                includingPropertiesForKeys: Array(keys),
+                options: [.skipsHiddenFiles]
+            ) else {
+                status = "تعذر قراءة المجلد: \(folderURL.lastPathComponent)"
+                continue
+            }
+
+            for case let source as URL in enumerator {
+                do {
+                    let values = try source.resourceValues(forKeys: keys)
+                    guard values.isRegularFile == true else { continue }
+                    let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
+                    let relativePath = rootName + "/" + rel.split(separator: "/").map { Self.safeFileName(String($0)) }.joined(separator: "/")
+                    let name = Self.safeFileName(source.lastPathComponent)
+                    let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: UUID().uuidString + "_" + name)
+                    try FileManager.default.copyItem(at: source, to: target)
+                    let copied = try target.resourceValues(forKeys: [.fileSizeKey])
+                    prepared.append(PendingFile(url: target, name: name, size: Int64(copied.fileSize ?? 0), relativePath: relativePath))
+                } catch {
+                    status = "تعذر تجهيز عنصر: \(source.lastPathComponent)"
+                }
             }
         }
 
         pendingFiles = prepared
-        status = prepared.isEmpty ? "المجلد لا يحتوي ملفات قابلة للإرسال" : "تم تجهيز مجلد يحتوي \(prepared.count) ملف"
+        if prepared.isEmpty {
+            status = "لم يتم العثور على ملفات قابلة للإرسال"
+        } else {
+            status = "تم تجهيز \(folderURLs.count) مجلد/مجلدات تحتوي \(prepared.count) ملف"
+        }
     }
 
     func discover() {
