@@ -31,7 +31,7 @@ except Exception:
 
 APP_NAME = "SendViaLocalNet"
 DISPLAY_NAME = "نقل محلي Pro"
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.1.4"
 PORT = 5051
 BUFFER_SIZE = 1024 * 256
 CLIENT_TIMEOUT = 35
