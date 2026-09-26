@@ -126,6 +126,19 @@ final class TransferReceiver {
 
             File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "SendViaLocalNet");
             if (!directory.exists() && !directory.mkdirs()) throw new Exception("تعذر إنشاء مجلد التنزيل");
+            String relative = headerValue(header, "X-Relative-Path");
+            if (relative != null && relative.length() > 0) {
+                try { relative = URLDecoder.decode(relative, "UTF-8"); } catch (Exception ignored) {}
+                String[] parts = relative.replace("\\", "/").split("/");
+                if (parts.length > 1) {
+                    for (int i = 0; i < parts.length - 1; i++) {
+                        String part = safeFilename(parts[i]);
+                        if (part.length() > 0 && !".".equals(part) && !"..".equals(part)) directory = new File(directory, part);
+                    }
+                    if (!directory.exists() && !directory.mkdirs()) throw new Exception("تعذر إنشاء بنية المجلد");
+                    filename = safeFilename(parts[parts.length - 1]);
+                }
+            }
             target = uniqueFile(directory, safeFilename(filename));
             stream(input, target, length);
             writeResponse(socket, "200 OK", "OK");
@@ -203,7 +216,7 @@ final class TransferReceiver {
         String headers = "HTTP/1.1 " + status + "\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Access-Control-Allow-Methods: POST, OPTIONS, GET\r\n" +
-                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size\r\n" +
+                "Access-Control-Allow-Headers: Content-Type, X-File-Name, X-File-Size, X-Relative-Path\r\n" +
                 "Content-Type: text/plain; charset=utf-8\r\n" +
                 "Content-Length: " + data.length + "\r\nConnection: close\r\n\r\n";
         output.write(headers.getBytes("UTF-8"));
