@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.6</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.7</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -29,7 +29,7 @@
   <button id="moveModeBtn" class="btn soft" onclick="setTransferMode('move')">➡️ نقل</button>
 </div>
 <div id="moveModeNote" class="install" style="display:none;margin-bottom:10px"><b>النقل الحقيقي:</b> Safari/PWA لا يعطي الصفحة صلاحية حذف الملف الأصلي من On My iPhone بعد الإرسال. لذلك لن نحذف أي ملف من المتصفح تلقائيًا. استخدم نسخة iPhone Native إذا أردت حذف الأصل بعد نجاح النقل.</div>
-<div id="dropZone" class="drop"><div class="cloud">☁️</div><h3>ماذا تريد أن ترسل؟</h3><p>اختر ملفًا أو ملفات، أو أضف مجلدًا كاملًا. يمكنك الضغط على «إضافة مجلد» أكثر من مرة لإرسال عدة مجلدات معًا، بما فيها المجلدات الفرعية.</p><button class="btn primary full" style="margin-bottom:8px" onclick="openOnMyIPhonePicker()">📱 اختيار محتويات On My iPhone</button><div class="row"><button class="btn primary" onclick="singleInput.click()">📄 ملف</button><button class="btn primary" onclick="fileInput.click()">🗂️ ملفات</button></div><button class="btn soft full" style="margin-top:8px" onclick="folderInput.click()">📁 إضافة مجلد / إرسال الكل</button><p id="iosAllHint" style="margin-top:10px">على iPhone: افتح <b>On My iPhone</b> من نافذة Files ثم اختر المجلد الذي تريد نقله. إذا سمح iOS باختيار الجذر نفسه فسيتم إرسال كل ما بداخله؛ وإذا لم يسمح، اختر المجلدات الظاهرة واحدًا تلو الآخر.</p><input id="singleInput" type="file"><input id="fileInput" type="file" multiple><input id="folderInput" type="file" webkitdirectory directory multiple></div><div id="fileList" class="files" style="margin-top:10px"></div><div class="row" style="margin-top:10px"><button class="btn primary" onclick="sendFiles()">🚀 إرسال الآن</button><button class="btn danger" onclick="clearFiles()">مسح الملفات</button></div><div id="status" class="status">جاهز للإرسال والاستقبال.</div><div class="progress"><span id="progress"></span></div></div>
+<div id="dropZone" class="drop"><div class="cloud">☁️</div><h3>ماذا تريد أن ترسل؟</h3><p>اختر ملفًا أو ملفات، أو أضف مجلدًا كاملًا. يمكنك الضغط على «إضافة مجلد» أكثر من مرة لإرسال عدة مجلدات معًا، بما فيها المجلدات الفرعية.</p><button class="btn primary full" style="margin-bottom:8px" onclick="openOnMyIPhonePicker()">📱 اختيار محتويات On My iPhone</button><div class="row"><button class="btn primary" onclick="singleInput.click()">📄 ملف</button><button class="btn primary" onclick="fileInput.click()">🗂️ ملفات</button></div><button class="btn soft full" style="margin-top:8px" onclick="folderInput.click()">📁 إضافة مجلد / إرسال الكل</button><p id="iosAllHint" style="margin-top:10px">على iPhone: افتح <b>On My iPhone</b> من نافذة Files ثم اختر المجلد الذي تريد نقله. إذا سمح iOS باختيار الجذر نفسه فسيتم إرسال كل ما بداخله؛ وإذا لم يسمح، اختر المجلدات الظاهرة واحدًا تلو الآخر.</p><input id="singleInput" type="file"><input id="fileInput" type="file" multiple><input id="folderInput" type="file" webkitdirectory directory multiple></div><div id="fileList" class="files" style="margin-top:10px"></div><div class="row" style="margin-top:10px"><button id="sendNowBtn" class="btn primary" onclick="sendFiles()">🚀 إرسال الآن</button><button id="cancelSendBtn" class="btn danger" style="display:none" onclick="cancelCurrentTransfer()">⛔ إيقاف</button></div><button class="btn soft full" style="margin-top:8px" onclick="clearFiles()">مسح الملفات</button><div id="status" class="status">جاهز للإرسال والاستقبال.</div><div class="progress"><span id="progress"></span></div></div>
 <div id="receivePanel" class="panel"><div class="head"><h2>الملفات الواردة</h2><button class="btn soft" onclick="loadInbox()">تحديث</button></div><div id="inbox" class="inbox"></div></div>
 <div id="helpPanel" class="panel"><div class="install"><b>قبل الاستخدام:</b><br>• يجب أن يكون الكمبيوتر والهاتف على شبكة Wi‑Fi نفسها.<br>• اترك برنامج Windows مفتوحًا ليعمل كمركز اتصال للآيفون.<br>• لإرسال مباشر إلى Android، شغّل الاستقبال في تطبيق Android ثم أضف IP الخاص به.<br>• النقل يعمل باتجاهين: أي جهاز يمكن أن يرسل أو يستقبل.<br>• الملفات الواردة للآيفون تظهر في تبويب استقبال، ثم اضغط تنزيل.</div></div>
 </section></div></div><div id="toast" class="toast"></div>
@@ -79,6 +79,58 @@ document.addEventListener('visibilitychange',()=>{
   }
 });
 
+
+let transferRunning=false;
+let transferCancelled=false;
+let activeControllers=new Set();
+
+function setSendingUi(active){
+  const btn=$('sendNowBtn'),cancel=$('cancelSendBtn');
+  if(btn){
+    btn.disabled=active;
+    btn.textContent=active?'⏳ الإرسال يعمل...':'🚀 إرسال الآن';
+  }
+  if(cancel)cancel.style.display=active?'block':'none';
+}
+
+function cancelCurrentTransfer(){
+  if(!transferRunning)return;
+  transferCancelled=true;
+  for(const controller of [...activeControllers]){
+    try{controller.abort()}catch(e){}
+  }
+  activeControllers.clear();
+  $('status').textContent='جارٍ إيقاف النقل بأمان... يمكنك إعادة الإرسال بعد انتهاء العمليات الحالية.';
+  toast('تم طلب إيقاف النقل');
+}
+
+async function fetchWithTimeout(url,options={},timeoutMs=90000){
+  const controller=new AbortController();
+  activeControllers.add(controller);
+  const external=options.signal;
+  let externalAbort;
+  if(external){
+    externalAbort=()=>controller.abort();
+    if(external.aborted)controller.abort();
+    else external.addEventListener('abort',externalAbort,{once:true});
+  }
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const response=await fetch(url,{...options,signal:controller.signal});
+    return response;
+  }catch(e){
+    if(controller.signal.aborted){
+      if(transferCancelled)throw new Error('تم إيقاف النقل');
+      throw new Error('انتهت مهلة الاتصال — ستتم إعادة المحاولة تلقائيًا');
+    }
+    throw e;
+  }finally{
+    clearTimeout(timer);
+    activeControllers.delete(controller);
+    if(external&&externalAbort)external.removeEventListener('abort',externalAbort);
+  }
+}
+
 async function getResumeState(base,file){
   const rp=relPath(file);
   const q=new URLSearchParams();
@@ -86,7 +138,7 @@ async function getResumeState(base,file){
   q.set('size',String(file.size));
   if(rp&&rp!==file.name)q.set('relative',rp);
   try{
-    const r=await fetch(base+'/api/resume-status?'+q.toString(),{cache:'no-store'});
+    const r=await fetchWithTimeout(base+'/api/resume-status?'+q.toString(),{cache:'no-store'},10000);
     if(!r.ok)return null;
     const d=await r.json();
     return d&&d.ok?d:null;
@@ -106,8 +158,9 @@ async function postRawLegacy(url,file){
   if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
   let lastError='';
   for(let attempt=1;attempt<=3;attempt++){
+    if(transferCancelled)throw new Error('تم إيقاف النقل');
     try{
-      const r=await fetch(url,{method:'POST',headers,body:file});
+      const r=await fetchWithTimeout(url,{method:'POST',headers,body:file},60000);
       if(r.ok)return true;
       lastError='HTTP '+r.status;
     }catch(e){
@@ -144,6 +197,7 @@ async function postRaw(base,file){
     let lastError='';
 
     for(let attempt=1;attempt<=3&&!advanced;attempt++){
+      if(transferCancelled)throw new Error('تم إيقاف النقل');
       const headers={
         'Content-Type':'application/octet-stream',
         'X-File-Name':encodeURIComponent(file.name),
@@ -154,7 +208,7 @@ async function postRaw(base,file){
       if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
 
       try{
-        const r=await fetch(base+'/upload',{method:'POST',headers,body});
+        const r=await fetchWithTimeout(base+'/upload',{method:'POST',headers,body},180000);
         if(r.ok){
           advanced=true;
           break;
@@ -194,8 +248,15 @@ async function postRaw(base,file){
 }
 
 async function sendFiles(){
+  if(transferRunning){
+    toast('الإرسال يعمل بالفعل — لا حاجة للضغط مرة أخرى');
+    return;
+  }
   if(!selected.size){toast('حدد جهازًا واحدًا على الأقل');return}
   if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}
+  transferRunning=true;
+  transferCancelled=false;
+  setSendingUi(true);
   if(transferMode==='move'){
     toast('سيتم النسخ فقط؛ Safari لا يسمح بحذف الأصل تلقائيًا');
   }
@@ -216,7 +277,7 @@ async function sendFiles(){
         let lastError='';
         for(let attempt=1;attempt<=3;attempt++){
           try{
-            const rr=await fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+            const rr=await fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file},120000);
             if(rr.ok)return true;
             lastError='HTTP '+rr.status;
           }catch(e){lastError=e&&e.message?e.message:String(e)}
@@ -230,12 +291,14 @@ async function sendFiles(){
   const total=tasks.length;
   let next=0,done=0,ok=0,fail=0;
   const failed=[];
-  const workerCount=Math.min(6,Math.max(1,total));
+  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const workerCount=Math.min(isIOS?3:6,Math.max(1,total));
   $('progress').style.width='0%';
-  $('status').textContent='وضع Turbo يعمل ⚡\nحتى 6 ملفات بالتوازي.\nالملفات الكبيرة تستكمل من آخر جزء محفوظ.';
+  $('status').textContent='وضع Turbo يعمل ⚡\n'+workerCount+' عمليات بالتوازي.\nيوجد Timeout تلقائي واستكمال عند توقف أي ملف.';
 
   async function worker(){
     while(true){
+      if(transferCancelled)return;
       const index=next++;
       if(index>=total)return;
       const task=tasks[index];
@@ -254,12 +317,23 @@ async function sendFiles(){
 
   try{
     await Promise.all(Array.from({length:workerCount},()=>worker()));
+  }catch(e){
+    failed.push(e&&e.message?e.message:String(e));
   }finally{
+    for(const controller of [...activeControllers]){try{controller.abort()}catch(e){}}
+    activeControllers.clear();
     await releaseScreenAwake();
+    transferRunning=false;
+    setSendingUi(false);
   }
 
-  $('status').textContent='انتهى الإرسال.\nنجح: '+ok+'\nفشل: '+fail+(failed.length?'\n\nآخر الملفات الفاشلة:\n'+failed.slice(-8).join('\n'):'');
-  toast(fail?'انتهى مع بعض الأخطاء':'تم الإرسال بنجاح');
+  if(transferCancelled){
+    $('status').textContent='تم إيقاف النقل. الملفات المكتملة محفوظة، وعند إعادة الإرسال سيستكمل ما يمكن استكماله.';
+    toast('تم إيقاف النقل');
+  }else{
+    $('status').textContent='انتهى الإرسال.\nنجح: '+ok+'\nفشل: '+fail+(failed.length?'\n\nآخر الملفات الفاشلة:\n'+failed.slice(-8).join('\n'):'');
+    toast(fail?'انتهى مع بعض الأخطاء':'تم الإرسال بنجاح');
+  }
 }
 
 async function loadInbox(){try{const r=await fetch('/api/inbox/'+encodeURIComponent(myId));const d=await r.json(),arr=d.files||[];$('inboxCount').textContent=arr.length;$('inbox').innerHTML=arr.length?arr.map(f=>`<div class="incoming"><div class="ico">📥</div><div style="min-width:0"><div class="name">${esc(f.filename)}</div><div class="sub">من ${esc(f.sender_name)} • ${fmt(f.size)}</div></div><a class="download" href="/api/download/${encodeURIComponent(f.id)}/${encodeURIComponent(myId)}" onclick="setTimeout(loadInbox,1500)">تنزيل</a></div>`).join(''):'<div class="empty">لا توجد ملفات واردة حاليًا.</div>'}catch{$('inbox').innerHTML='<div class="empty">تعذر تحميل الملفات الواردة.</div>'}}function showTab(t){for(const n of ['send','receive','help']){$(n+'Panel').classList.toggle('active',n===t);$(n+'Tab').classList.toggle('active',n===t)}if(t==='receive')loadInbox()}$('singleInput').addEventListener('change',e=>addFiles([...e.target.files]));$('fileInput').addEventListener('change',e=>addFiles([...e.target.files]));$('folderInput').addEventListener('change',e=>addFiles([...e.target.files]));const dz=$('dropZone');['dragenter','dragover'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.add('drag')}));['dragleave','drop'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.remove('drag')}));dz.addEventListener('drop',e=>addFiles([...e.dataTransfer.files]));loadLocal();register();loadInbox();setInterval(()=>{heartbeat();loadHubDevices();loadInbox()},5000);if('caches' in window){caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{})}
