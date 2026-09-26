@@ -64,6 +64,16 @@ final class LocalTransferService: ObservableObject {
 
     private let knownDevicesKey = "svln.known.devices"
 
+    private lazy var transferSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.httpMaximumConnectionsPerHost = 6
+        config.timeoutIntervalForRequest = 180
+        config.timeoutIntervalForResource = 60 * 60 * 6
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
+    }()
+
     init() {
         loadKnownDevices()
     }
@@ -306,31 +316,52 @@ final class LocalTransferService: ObservableObject {
                 return
             }
 
+            let jobs: [(PendingFile, LocalDevice)] = targets.flatMap { device in
+                files.map { file in (file, device) }
+            }
+            let total = max(1, jobs.count)
+            let turboWorkers = min(4, total)
             var completed = 0
             var succeeded = 0
             var itemSucceeded: [UUID: Bool] = Dictionary(uniqueKeysWithValues: files.map { ($0.id, true) })
-            let total = max(1, targets.count * files.count)
+            var nextJob = 0
 
-            for device in targets {
-                for file in files {
-                    await MainActor.run {
-                        self.status = "\(self.transferMode == "move" ? "نقل" : "نسخ") \(file.name) إلى \(device.name)…"
+            await MainActor.run {
+                self.status = "Turbo يعمل ⚡ • حتى \(turboWorkers) عمليات نقل بالتوازي"
+            }
+
+            await withTaskGroup(of: (UUID, Bool).self) { group in
+                func enqueueNext() {
+                    guard nextJob < jobs.count else { return }
+                    let (file, device) = jobs[nextJob]
+                    nextJob += 1
+                    group.addTask { [weak self] in
+                        guard let self = self else { return (file.id, false) }
+                        let ok = await self.send(file: file, to: device)
+                        return (file.id, ok)
                     }
-                    let ok = await self.send(file: file, to: device)
-                    if ok {
+                }
+
+                for _ in 0..<turboWorkers { enqueueNext() }
+
+                while let result = await group.next() {
+                    completed += 1
+                    if result.1 {
                         succeeded += 1
                     } else {
-                        itemSucceeded[file.id] = false
+                        itemSucceeded[result.0] = false
                     }
-                    completed += 1
-                    await MainActor.run { self.progress = Double(completed) / Double(total) }
+                    await MainActor.run {
+                        self.progress = Double(completed) / Double(total)
+                        self.status = "Turbo ⚡ • اكتمل \(completed)/\(total) • نجح \(succeeded) • فشل \(completed - succeeded)"
+                    }
+                    enqueueNext()
                 }
             }
 
             var deletedCount = 0
             var deleteFailed = 0
             if self.transferMode == "move" {
-                // Loose files: delete only when the same file succeeded to all selected targets.
                 for file in files where file.rootFolderId == nil && !file.isDirectory {
                     guard itemSucceeded[file.id] == true else { continue }
                     do {
@@ -341,8 +372,6 @@ final class LocalTransferService: ObservableObject {
                     }
                 }
 
-                // Selected folders: delete the root only when every item in that folder
-                // succeeded to every selected target.
                 for folder in self.selectedFolders where folder.selected {
                     let folderItems = files.filter { $0.rootFolderId == folder.id }
                     guard !folderItems.isEmpty, folderItems.allSatisfy({ itemSucceeded[$0.id] == true }) else { continue }
@@ -419,7 +448,7 @@ final class LocalTransferService: ObservableObject {
         do {
             var request = URLRequest(url: url)
             request.timeoutInterval = 8
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await transferSession.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300,
                   let value = try? JSONDecoder().decode(ResumeStatus.self, from: data) else {
                 return (false, 0, false)
@@ -439,64 +468,74 @@ final class LocalTransferService: ObservableObject {
         guard let handle = try? FileHandle(forReadingFrom: file.url) else { return false }
         defer { try? handle.close() }
 
-        let chunkSize = 50 * 1024 * 1024
+        // 32 MiB keeps memory bounded even with four simultaneous iPhone transfers.
+        let chunkSize = 32 * 1024 * 1024
         var offset = state.offset
         do { try handle.seek(toOffset: UInt64(offset)) }
         catch { return false }
 
-        var needsFinalize = offset >= file.size
-        while offset < file.size || needsFinalize {
-            let data: Data
-            if needsFinalize {
-                data = Data()
-                needsFinalize = false
-            } else {
-                do {
-                    data = try handle.read(upToCount: chunkSize) ?? Data()
-                } catch {
-                    return false
-                }
-                if data.isEmpty { return false }
+        // Receiver may already have all bytes in .svln.part but still need finalization.
+        if offset >= file.size {
+            guard var request = makeUploadRequest(file: file, to: device, offset: offset) else { return false }
+            request.httpBody = Data()
+            do {
+                let (_, response) = try await transferSession.data(for: request)
+                return ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300
+            } catch {
+                return false
             }
+        }
+
+        while offset < file.size {
+            let chunkStart = offset
+            let wanted = Int(min(Int64(chunkSize), file.size - chunkStart))
+            let data: Data
+            do {
+                data = try handle.read(upToCount: wanted) ?? Data()
+            } catch {
+                return false
+            }
+            if data.isEmpty { return false }
 
             var sent = false
             for _ in 0..<3 {
-                guard var request = makeUploadRequest(file: file, to: device, offset: offset) else { return false }
+                guard var request = makeUploadRequest(file: file, to: device, offset: chunkStart) else { return false }
                 request.httpBody = data
                 do {
-                    let (_, response) = try await URLSession.shared.data(for: request)
+                    let (_, response) = try await transferSession.data(for: request)
                     if let http = response as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
+                        // 2xx is returned only after the receiver persisted this chunk.
+                        offset = chunkStart + Int64(data.count)
                         sent = true
                         break
                     }
                 } catch {
-                    // Query the receiver below and continue from its persisted .svln.part offset.
+                    // Query persisted receiver state only on failure/recovery.
                 }
 
                 state = await resumeStatus(for: file, on: device)
                 if state.completed { return true }
-                if state.supported && state.offset != offset {
+                if state.supported {
                     offset = state.offset
                     do { try handle.seek(toOffset: UInt64(offset)) } catch { return false }
-                    sent = true
-                    break
+                    if offset != chunkStart {
+                        sent = true
+                        break
+                    }
                 }
             }
 
             if !sent { return false }
 
-            // A receiver-side offset change means the chunk loop should restart from that point.
-            let after = await resumeStatus(for: file, on: device)
-            if after.completed { return true }
-            if after.supported {
-                offset = after.offset
+            // A recovery may have moved us to the middle of the chunk.
+            if offset != chunkStart + Int64(data.count) {
                 do { try handle.seek(toOffset: UInt64(offset)) } catch { return false }
-                if offset >= file.size { needsFinalize = true }
-            } else {
-                offset += Int64(data.count)
             }
+
+            if offset >= file.size { return true }
         }
-        return (await resumeStatus(for: file, on: device)).completed
+
+        return true
     }
 
     private func sendLegacy(file: PendingFile, to device: LocalDevice) async -> Bool {
@@ -505,10 +544,10 @@ final class LocalTransferService: ObservableObject {
             let response: URLResponse
             if file.isDirectory {
                 request.httpBody = Data()
-                let (_, result) = try await URLSession.shared.data(for: request)
+                let (_, result) = try await transferSession.data(for: request)
                 response = result
             } else {
-                let (_, result) = try await URLSession.shared.upload(for: request, fromFile: file.url)
+                let (_, result) = try await transferSession.upload(for: request, fromFile: file.url)
                 response = result
             }
             return ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300
@@ -809,7 +848,7 @@ final class LocalTransferService: ObservableObject {
 
         receiveMore = { [weak connection] in
             guard let connection = connection else { return }
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 128 * 1024) { data, _, complete, error in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 512 * 1024) { data, _, complete, error in
                 if let data = data, !data.isEmpty {
                     do {
                         let remaining = requestLength >= 0 ? max(0, requestLength - written) : Int64(data.count)
