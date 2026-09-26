@@ -351,6 +351,10 @@ class TransferHandler(BaseHTTPRequestHandler):
         self._cors()
         self.send_header("Content-Type", content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream")
         self.send_header("Content-Length", str(path.stat().st_size))
+        if not download_name:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         if download_name:
             encoded = urllib.parse.quote(download_name)
             self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{encoded}")
