@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject var service: LocalTransferService
     @State private var showImporter = false
+    @State private var showFolderImporter = false
 
     var body: some View {
         NavigationView {
@@ -26,6 +27,13 @@ struct ContentView: View {
                 switch result {
                 case .success(let urls): service.prepareFiles(urls)
                 case .failure(let error): service.status = "تعذر اختيار الملفات: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    if let folder = urls.first { service.prepareFolder(folder) }
+                case .failure(let error): service.status = "تعذر اختيار المجلد: \(error.localizedDescription)"
                 }
             }
         }
@@ -89,8 +97,10 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("الإرسال").font(.headline)
             HStack {
-                Button { showImporter = true } label: { Label("اختيار ملفات", systemImage: "doc.badge.plus") }
+                Button { showImporter = true } label: { Label("ملف / ملفات", systemImage: "doc.badge.plus") }
                     .buttonStyle(.borderedProminent)
+                Button { showFolderImporter = true } label: { Label("مجلد", systemImage: "folder.badge.plus") }
+                    .buttonStyle(.bordered)
                 if !service.pendingFiles.isEmpty {
                     Button("مسح") { service.clearPendingFiles() }.buttonStyle(.bordered)
                 }
@@ -100,8 +110,13 @@ struct ContentView: View {
             } else {
                 ForEach(service.pendingFiles) { file in
                     HStack {
-                        Image(systemName: "doc")
-                        Text(file.name).lineLimit(1)
+                        Image(systemName: file.relativePath == nil ? "doc" : "folder")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(file.name).lineLimit(1)
+                            if let path = file.relativePath {
+                                Text(path).font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                            }
+                        }
                         Spacer()
                         Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
                     }
