@@ -29,10 +29,10 @@ struct ContentView: View {
                 case .failure(let error): service.status = "تعذر اختيار الملفات: \(error.localizedDescription)"
                 }
             }
-            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
+            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls):
-                    if let folder = urls.first { service.prepareFolder(folder) }
+                    service.prepareFolders(urls)
                 case .failure(let error): service.status = "تعذر اختيار المجلد: \(error.localizedDescription)"
                 }
             }
@@ -99,14 +99,14 @@ struct ContentView: View {
             HStack {
                 Button { showImporter = true } label: { Label("ملف / ملفات", systemImage: "doc.badge.plus") }
                     .buttonStyle(.borderedProminent)
-                Button { showFolderImporter = true } label: { Label("إرسال الكل", systemImage: "folder.fill.badge.plus") }
+                Button { showFolderImporter = true } label: { Label("مجلدات / إرسال الكل", systemImage: "folder.fill.badge.plus") }
                     .buttonStyle(.bordered)
                 if !service.pendingFiles.isEmpty {
                     Button("مسح") { service.clearPendingFiles() }.buttonStyle(.bordered)
                 }
             }
             if service.pendingFiles.isEmpty {
-                Text("اختر ملفًا/ملفات، أو اختر «إرسال الكل» وحدد مجلدًا رئيسيًا لإرسال كل ما بداخله من ملفات ومجلدات فرعية.").font(.subheadline).foregroundColor(.secondary)
+                Text("اختر ملفًا/ملفات، أو اختر «مجلدات / إرسال الكل» وحدد مجلدًا واحدًا أو عدة مجلدات لإرسال كل ما بداخلها مع المجلدات الفرعية.").font(.subheadline).foregroundColor(.secondary)
             } else {
                 ForEach(service.pendingFiles) { file in
                     HStack {
