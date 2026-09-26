@@ -7,7 +7,7 @@ on:
       - 'desktop/**'
       - '.github/workflows/build-desktop.yml'
   push:
-    branches: [ main ]
+    branches: [ main, pwa-iphone-windows-transfer ]
     paths-ignore:
       - 'desktop/release/**'
       - 'DOWNLOAD_WINDOWS.md'
@@ -59,21 +59,18 @@ jobs:
           if-no-files-found: error
 
       - name: Publish installer to repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push'
         shell: bash
         run: |
-          cat > DOWNLOAD_WINDOWS.md <<'EOF'
+          BRANCH="${GITHUB_REF_NAME}"
+          cat > DOWNLOAD_WINDOWS.md <<EOF
           # تحميل برنامج Windows
 
-          ملف التثبيت المباشر:
-
-          https://github.com/aljwaal1/sentvialocalnet/raw/main/desktop/release/SendViaLocalNet-Setup.exe
-
-          الإصدار الجديد يعرض IP الحالي، يمنع تشغيل نسختين، ويغلق النسخة المفتوحة تلقائيًا أثناء التحديث ثم يعيد تشغيل البرنامج.
+          https://github.com/aljwaal1/sentvialocalnet/raw/${BRANCH}/desktop/release/SendViaLocalNet-Setup.exe
           EOF
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add desktop/release/SendViaLocalNet-Setup.exe DOWNLOAD_WINDOWS.md
           git commit -m "Build Windows installer [skip ci]" || echo "No changes"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git pull --rebase origin "${BRANCH}"
+          git push origin "HEAD:${BRANCH}"
