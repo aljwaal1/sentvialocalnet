@@ -127,7 +127,7 @@ final class LocalTransferService: ObservableObject {
             let scoped = source.startAccessingSecurityScopedResource()
             defer { if scoped { source.stopAccessingSecurityScopedResource() } }
             do {
-                let name = Self.safeFileName(source.lastPathComponent)
+                let name = source.lastPathComponent
                 let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: name)
                 try FileManager.default.copyItem(at: source, to: target)
                 let values = try target.resourceValues(forKeys: [.fileSizeKey])
@@ -144,7 +144,7 @@ final class LocalTransferService: ObservableObject {
         let scoped = folderURL.startAccessingSecurityScopedResource()
         defer { if scoped { folderURL.stopAccessingSecurityScopedResource() } }
 
-        let rootName = Self.safeFileName(folderURL.lastPathComponent)
+        let rootName = folderURL.lastPathComponent
         if selectedFolders.contains(where: { $0.name.caseInsensitiveCompare(rootName) == .orderedSame && $0.url == folderURL }) {
             status = "هذا المجلد مضاف بالفعل: \(rootName)"
             return
@@ -168,8 +168,8 @@ final class LocalTransferService: ObservableObject {
             do {
                 let values = try source.resourceValues(forKeys: keys)
                 let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
-                let relativePath = rootName + "/" + rel.split(separator: "/").map { Self.safeFileName(String($0)) }.joined(separator: "/")
-                let name = Self.safeFileName(source.lastPathComponent)
+                let relativePath = rootName + "/" + rel.split(separator: "/").map(String.init).joined(separator: "/")
+                let name = source.lastPathComponent
 
                 if values.isDirectory == true {
                     newItems.append(PendingFile(url: source, name: name, size: 0, relativePath: relativePath, isDirectory: true, rootFolderId: rootId))
@@ -285,6 +285,7 @@ final class LocalTransferService: ObservableObject {
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(file.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? file.name, forHTTPHeaderField: "X-File-Name")
         request.setValue(String(file.size), forHTTPHeaderField: "X-File-Size")
+        request.setValue("skip", forHTTPHeaderField: "X-Conflict-Policy")
         if file.isDirectory {
             request.setValue("directory", forHTTPHeaderField: "X-Entry-Type")
         }
@@ -390,14 +391,17 @@ final class LocalTransferService: ObservableObject {
 
         let encodedName = headers["x-file-name"] ?? "received-file"
         let decodedName = encodedName.removingPercentEncoding ?? encodedName
-        let name = Self.safeFileName(decodedName)
+        guard let name = Self.exactComponent(decodedName) else {
+            sendHTTP(connection, code: 422, body: "Invalid file name")
+            return
+        }
         let expected = Int64(headers["x-file-size"] ?? headers["content-length"] ?? "") ?? -1
         var folder = Self.receiveFolder()
 
         if (headers["x-entry-type"] ?? "").lowercased() == "directory" {
             if let encodedRelative = headers["x-relative-path"], !encodedRelative.isEmpty {
                 let decodedRelative = encodedRelative.removingPercentEncoding ?? encodedRelative
-                let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map { Self.safeFileName(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+                let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").compactMap { Self.exactComponent(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
                 for component in parts {
                     folder.appendPathComponent(component, isDirectory: true)
                 }
@@ -415,7 +419,7 @@ final class LocalTransferService: ObservableObject {
         }
         if let encodedRelative = headers["x-relative-path"], !encodedRelative.isEmpty {
             let decodedRelative = encodedRelative.removingPercentEncoding ?? encodedRelative
-            let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map { Self.safeFileName(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+            let parts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").compactMap { Self.exactComponent(String($0)) }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
             if parts.count > 1 {
                 for component in parts.dropLast() {
                     folder.appendPathComponent(component, isDirectory: true)
@@ -423,9 +427,13 @@ final class LocalTransferService: ObservableObject {
                 try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             }
         }
-        let destination = Self.uniqueURL(in: folder, name: name)
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: destination) else { sendHTTP(connection, code: 500, body: "Cannot create file"); return }
+        let destination = folder.appendingPathComponent(name, isDirectory: false)
+        let conflict = (headers["x-conflict-policy"] ?? "skip").lowercased()
+        let existedBefore = FileManager.default.fileExists(atPath: destination.path)
+        let receiveTarget = destination.appendingPathExtension("svln.part")
+        try? FileManager.default.removeItem(at: receiveTarget)
+        FileManager.default.createFile(atPath: receiveTarget.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: receiveTarget) else { sendHTTP(connection, code: 500, body: "Cannot create file"); return }
 
         var written: Int64 = 0
         do {
@@ -444,14 +452,33 @@ final class LocalTransferService: ObservableObject {
             try? handle.close()
             guard let self = self else { return }
             if success {
-                let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? written
-                DispatchQueue.main.async {
-                    self.receivedFiles.insert(ReceivedFile(url: destination, name: destination.lastPathComponent, size: size, receivedAt: Date()), at: 0)
-                    self.status = "تم استلام \(destination.lastPathComponent)"
+                if existedBefore && conflict != "overwrite" {
+                    try? FileManager.default.removeItem(at: receiveTarget)
+                    if conflict == "cancel" {
+                        self.sendHTTP(connection, code: 409, body: "EXISTS")
+                    } else {
+                        DispatchQueue.main.async { self.status = "تم تخطي \(destination.lastPathComponent) لأنه موجود مسبقًا" }
+                        self.sendHTTP(connection, code: 200, body: "SKIPPED")
+                    }
+                    return
                 }
-                self.sendHTTP(connection, code: 200, body: "OK")
+                do {
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        try FileManager.default.removeItem(at: destination)
+                    }
+                    try FileManager.default.moveItem(at: receiveTarget, to: destination)
+                    let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? written
+                    DispatchQueue.main.async {
+                        self.receivedFiles.insert(ReceivedFile(url: destination, name: destination.lastPathComponent, size: size, receivedAt: Date()), at: 0)
+                        self.status = "تم استلام \(destination.lastPathComponent)"
+                    }
+                    self.sendHTTP(connection, code: 200, body: "OK")
+                } catch {
+                    try? FileManager.default.removeItem(at: receiveTarget)
+                    self.sendHTTP(connection, code: 500, body: "Cannot finalize file")
+                }
             } else {
-                try? FileManager.default.removeItem(at: destination)
+                try? FileManager.default.removeItem(at: receiveTarget)
                 self.sendHTTP(connection, code: 500, body: "Receive failed")
             }
         }
@@ -474,9 +501,9 @@ final class LocalTransferService: ObservableObject {
 
     private func sendHTTP(_ connection: NWConnection, code: Int, body: String, contentType: String = "text/plain; charset=utf-8") {
         let reason: String
-        switch code { case 200: reason = "OK"; case 204: reason = "No Content"; case 400: reason = "Bad Request"; case 404: reason = "Not Found"; case 405: reason = "Method Not Allowed"; default: reason = "Internal Server Error" }
+        switch code { case 200: reason = "OK"; case 204: reason = "No Content"; case 400: reason = "Bad Request"; case 404: reason = "Not Found"; case 405: reason = "Method Not Allowed"; case 409: reason = "Conflict"; case 422: reason = "Unprocessable Entity"; default: reason = "Internal Server Error" }
         let data = Data(body.utf8)
-        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-Relative-Path,X-Entry-Type,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
+        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-Relative-Path,X-Entry-Type,X-Conflict-Policy,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
         var packet = Data(response.utf8); packet.append(data)
         connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
     }
@@ -563,6 +590,11 @@ final class LocalTransferService: ObservableObject {
             if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
             index += 1
         }
+    }
+
+    private static func exactComponent(_ value: String) -> String? {
+        guard !value.isEmpty, value != ".", value != "..", !value.contains("/"), !value.contains("\0") else { return nil }
+        return value
     }
 
     private static func safeFileName(_ value: String) -> String {
