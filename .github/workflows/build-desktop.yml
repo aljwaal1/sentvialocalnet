@@ -7,13 +7,23 @@ on:
       - 'desktop/**'
       - '.github/workflows/build-desktop.yml'
   push:
-    branches: [ main ]
-    paths-ignore:
-      - 'desktop/release/**'
-      - 'DOWNLOAD_WINDOWS.md'
+    branches: [ main, pwa-iphone-windows-transfer ]
+    paths:
+      - 'desktop/app.py'
+      - 'desktop/discovery_responder.py'
+      - 'desktop/launcher.py'
+      - 'desktop/windows_runtime.py'
+      - 'desktop/installer.iss'
+      - 'desktop/requirements.txt'
+      - 'desktop/stop_running_app.ps1'
+      - 'desktop/web/**'
+      - 'VERSION'
+      - 'tools/qa_check.py'
+      - '.github/workflows/build-desktop.yml'
 
 permissions:
   contents: write
+
 
 jobs:
   build-windows:
@@ -32,6 +42,9 @@ jobs:
 
       - name: Validate Python source
         run: python -m py_compile desktop/app.py desktop/discovery_responder.py desktop/windows_runtime.py desktop/launcher.py
+
+      - name: Cross-platform QA guard
+        run: python tools/qa_check.py
 
       - name: Build standalone EXE
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SendViaLocalNet --add-data "desktop/web;web" --paths desktop --distpath desktop/dist --workpath desktop/build desktop/launcher.py
@@ -58,22 +71,28 @@ jobs:
             desktop/release/SendViaLocalNet-Setup.exe
           if-no-files-found: error
 
-      - name: Publish installer to repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Publish versioned Windows installer to GitHub Release
+        if: github.event_name == 'push'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cat > DOWNLOAD_WINDOWS.md <<'EOF'
-          # تحميل برنامج Windows
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          TAG="v${VERSION}"
+          ASSET="SendViaLocalNet-Windows-v${VERSION}.exe"
+          cp desktop/release/SendViaLocalNet-Setup.exe "${ASSET}"
 
-          ملف التثبيت المباشر:
+          for attempt in 1 2 3 4 5; do
+            if ! gh release view "${TAG}" >/dev/null 2>&1; then
+              gh release create "${TAG}"                 --target "${GITHUB_SHA}"                 --title "SendViaLocalNet ${TAG}"                 --notes "Automated cross-platform build for ${TAG}."
+            fi
 
-          https://github.com/aljwaal1/sentvialocalnet/raw/main/desktop/release/SendViaLocalNet-Setup.exe
+            if gh release upload "${TAG}" "${ASSET}" --clobber; then
+              echo "Published ${ASSET}"
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
 
-          الإصدار الجديد يعرض IP الحالي، يمنع تشغيل نسختين، ويغلق النسخة المفتوحة تلقائيًا أثناء التحديث ثم يعيد تشغيل البرنامج.
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add desktop/release/SendViaLocalNet-Setup.exe DOWNLOAD_WINDOWS.md
-          git commit -m "Build Windows installer [skip ci]" || echo "No changes"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          echo "Failed to publish Windows release asset"
+          exit 1

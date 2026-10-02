@@ -9,13 +9,18 @@ on:
       - 'settings.gradle'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ main ]
-    paths-ignore:
-      - 'apk/**'
-      - 'DOWNLOAD_APK.md'
+    branches: [ main, pwa-iphone-windows-transfer ]
+    paths:
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'VERSION'
+      - 'tools/qa_check.py'
+      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: write
+
 
 jobs:
   build:
@@ -30,8 +35,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Locate Android SDK tools
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found"
+            exit 1
+          fi
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          "$SDKMANAGER" --version
 
       - name: Install Gradle
         run: |
@@ -64,6 +77,9 @@ jobs:
             echo "Signing secrets are not configured; using the runner debug key for this build."
           fi
 
+      - name: Cross-platform QA guard
+        run: python3 tools/qa_check.py
+
       - name: Build APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
@@ -79,19 +95,45 @@ jobs:
           path: apk/send-via-local-net.apk
           if-no-files-found: error
 
-      - name: Publish APK to repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Publish direct APK download files
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cat > DOWNLOAD_APK.md <<'EOF'
-          # تحميل تطبيق Android
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          BRANCH="${GITHUB_REF_NAME}"
+          REPO="${GITHUB_REPOSITORY}"
+          SOURCE="apk/send-via-local-net.apk"
 
-          التطبيق يدعم Android 4.4 (API 19) فما فوق:
+          publish_file() {
+            local TARGET="$1"
+            local MESSAGE="$2"
+            local CONTENT
+            local SHA
 
-          https://github.com/aljwaal1/sentvialocalnet/raw/main/apk/send-via-local-net.apk
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apk/send-via-local-net.apk DOWNLOAD_APK.md
-          git commit -m "Build Android APK [skip ci]" || echo "No changes"
-          git pull --rebase origin main
-          git push origin HEAD:main
+            CONTENT="$(base64 -w 0 "${SOURCE}")"
+            SHA="$(gh api "repos/${REPO}/contents/${TARGET}?ref=${BRANCH}" --jq '.sha' 2>/dev/null || true)"
+
+            if [ -n "${SHA}" ]; then
+              gh api --method PUT "repos/${REPO}/contents/${TARGET}" \
+                -f message="${MESSAGE}" \
+                -f content="${CONTENT}" \
+                -f branch="${BRANCH}" \
+                -f sha="${SHA}" >/dev/null
+            else
+              gh api --method PUT "repos/${REPO}/contents/${TARGET}" \
+                -f message="${MESSAGE}" \
+                -f content="${CONTENT}" \
+                -f branch="${BRANCH}" >/dev/null
+            fi
+          }
+
+          # Stable alias + immutable versioned filename.
+          publish_file "apk/send-via-local-net.apk" "Publish Android APK v${VERSION} [skip ci]"
+          publish_file "apk/SendViaLocalNet-v${VERSION}.apk" "Publish versioned Android APK v${VERSION} [skip ci]"
+
+          echo "Android direct downloads published:"
+          echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/apk/send-via-local-net.apk"
+          echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/apk/SendViaLocalNet-v${VERSION}.apk"

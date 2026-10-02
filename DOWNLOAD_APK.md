@@ -1,5 +1,9 @@
 # تحميل تطبيق Android
 
-التطبيق يدعم Android 4.4 (API 19) فما فوق:
+الإصدار الحالي: **v2.1.9**
 
-https://github.com/aljwaal1/sentvialocalnet/raw/main/apk/send-via-local-net.apk
+رابط مباشر ثابت:
+https://raw.githubusercontent.com/aljwaal1/sentvialocalnet/pwa-iphone-windows-transfer/apk/send-via-local-net.apk
+
+رابط مباشر مرتبط بالنسخة:
+https://raw.githubusercontent.com/aljwaal1/sentvialocalnet/pwa-iphone-windows-transfer/apk/SendViaLocalNet-v2.1.9.apk

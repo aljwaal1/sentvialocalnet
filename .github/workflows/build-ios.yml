@@ -6,6 +6,10 @@ on:
     paths:
       - 'ios/**'
       - '.github/workflows/build-ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ios.yml'
   workflow_dispatch:
 
 jobs:
@@ -20,6 +24,9 @@ jobs:
             brew install xcodegen
           fi
           xcodegen --version
+
+      - name: Cross-platform QA guard
+        run: python3 tools/qa_check.py
 
       - name: Generate Xcode project
         run: xcodegen generate --spec ios/project.yml

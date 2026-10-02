@@ -13,22 +13,421 @@
 <title>نقل محلي Pro</title>
 <style>
 :root{--bg:#f4f6fc;--panel:#fff;--text:#101828;--muted:#667085;--line:#e4e7ec;--primary:#4f46e5;--purple:#7c3aed;--green:#12b76a;--red:#f04438;--blue:#0284c7;--shadow:0 18px 55px rgba(16,24,40,.10);--radius:23px}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;color:var(--text);background:radial-gradient(circle at 85% 0,#ddd9ff,transparent 32%),linear-gradient(135deg,#f8fafc,#eef2ff)}button,input,select{font:inherit}button{cursor:pointer}.app{max-width:1180px;margin:auto;padding:14px;padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(22px,env(safe-area-inset-bottom))}.nav{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:19px;background:rgba(255,255,255,.86);backdrop-filter:blur(16px);box-shadow:0 8px 28px rgba(16,24,40,.07)}.brand{display:flex;gap:10px;align-items:center}.logo{width:43px;height:43px;border-radius:14px;display:grid;place-items:center;color:#fff;font-size:24px;background:linear-gradient(135deg,var(--primary),#06b6d4)}.brand b{display:block}.brand small{display:block;color:var(--muted);margin-top:2px}.online{font-size:12px;font-weight:800;padding:7px 10px;border-radius:999px;background:#ecfdf3;color:#027a48}.hero{margin-top:14px;padding:23px;border-radius:27px;color:#fff;background:radial-gradient(circle at 85% 20%,rgba(255,255,255,.18),transparent 25%),linear-gradient(135deg,#4338ca,#7c3aed 60%,#0891b2);box-shadow:var(--shadow)}.hero h1{margin:0 0 7px;font-size:28px}.hero p{margin:0;color:#ede9fe;line-height:1.75}.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:15px}.stat{padding:13px;border-radius:16px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.2)}.stat b{display:block;font-size:22px}.stat span{font-size:11px;color:#e0e7ff}.grid{display:grid;grid-template-columns:.86fr 1.14fr;gap:14px;margin-top:14px}.card{background:var(--panel);border-radius:var(--radius);padding:16px;box-shadow:0 10px 35px rgba(16,24,40,.07)}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.head h2{font-size:18px;margin:0}.badge{font-size:11px;font-weight:800;padding:6px 9px;border-radius:999px;background:#eef2ff;color:#4338ca}.tabs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;padding:5px;background:#f2f4f7;border-radius:14px;margin-bottom:13px}.tab{border:0;background:transparent;padding:10px 6px;border-radius:10px;color:#667085;font-weight:800}.tab.active{background:#fff;color:#4338ca;box-shadow:0 4px 14px rgba(16,24,40,.08)}.panel{display:none}.panel.active{display:block}label{display:block;font-size:12px;font-weight:800;color:#475467;margin:8px 0 5px}input,select{width:100%;border:1px solid var(--line);border-radius:13px;padding:12px;outline:none;background:#fff}input:focus,select:focus{border-color:#818cf8;box-shadow:0 0 0 4px rgba(99,102,241,.12)}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.btn{border:0;border-radius:13px;padding:12px 13px;font-weight:800}.primary{background:linear-gradient(135deg,var(--primary),var(--purple));color:#fff}.soft{background:#eef2ff;color:#4338ca}.green{background:#ecfdf3;color:#027a48}.danger{background:#fef3f2;color:#b42318}.full{width:100%}.devices,.files,.inbox{display:grid;gap:8px}.device,.file,.incoming{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:15px;background:#fff}.device.selected{background:#f8faff;border-color:#818cf8}.check{width:18px;height:18px;accent-color:#6366f1}.ico{width:39px;height:39px;border-radius:13px;display:grid;place-items:center;background:#f2f4ff;font-size:20px}.name{font-weight:800;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:11px;color:var(--muted);margin-top:3px;direction:ltr;text-align:right}.mini{border:0;border-radius:9px;padding:7px;background:#f2f4f7}.drop{text-align:center;padding:27px 14px;border:2px dashed #c7d2fe;border-radius:19px;background:linear-gradient(#fafaff,#fff)}.drop.drag{background:#eef2ff;border-color:#6366f1}.cloud{font-size:43px}.drop h3{margin:7px 0 4px}.drop p{margin:0 0 12px;color:var(--muted);font-size:12px}#fileInput{display:none}.status{white-space:pre-wrap;line-height:1.65;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#f8fafc;color:#475467;font-size:13px}.progress{height:7px;background:#eaecf0;border-radius:999px;overflow:hidden;margin-top:8px}.progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#4f46e5,#06b6d4);transition:.25s}.empty{text-align:center;color:var(--muted);padding:22px;border:1px dashed var(--line);border-radius:15px}.download{text-decoration:none;padding:9px 11px;border-radius:11px;background:#ecfdf3;color:#027a48;font-weight:800;font-size:12px}.install{padding:13px;border-radius:15px;background:#fffaeb;border:1px solid #fedf89;color:#7a2e0e;font-size:13px;line-height:1.7}.toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:100;background:#101828;color:#fff;padding:12px 14px;border-radius:13px;opacity:0;transform:translateY(18px);transition:.25s;text-align:center}.toast.show{opacity:1;transform:none}@media(max-width:850px){.grid{grid-template-columns:1fr}.app{padding:9px}.hero{padding:19px;border-radius:22px}.hero h1{font-size:24px}.brand small{display:none}}@media(max-width:520px){.row{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr 1fr}.stat{padding:10px}.stat b{font-size:19px}.card{padding:13px;border-radius:18px}.tabs{font-size:12px}.device,.file,.incoming{grid-template-columns:auto 1fr}.device .mini,.incoming .download{grid-column:2}.nav{border-radius:15px}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;color:var(--text);background:radial-gradient(circle at 85% 0,#ddd9ff,transparent 32%),linear-gradient(135deg,#f8fafc,#eef2ff)}button,input,select{font:inherit}button{cursor:pointer}.app{max-width:1180px;margin:auto;padding:14px;padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(22px,env(safe-area-inset-bottom))}.nav{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:19px;background:rgba(255,255,255,.86);backdrop-filter:blur(16px);box-shadow:0 8px 28px rgba(16,24,40,.07)}.brand{display:flex;gap:10px;align-items:center}.logo{width:43px;height:43px;border-radius:14px;display:grid;place-items:center;color:#fff;font-size:24px;background:linear-gradient(135deg,var(--primary),#06b6d4)}.brand b{display:block}.brand small{display:block;color:var(--muted);margin-top:2px}.online{font-size:12px;font-weight:800;padding:7px 10px;border-radius:999px;background:#ecfdf3;color:#027a48}.hero{margin-top:14px;padding:23px;border-radius:27px;color:#fff;background:radial-gradient(circle at 85% 20%,rgba(255,255,255,.18),transparent 25%),linear-gradient(135deg,#4338ca,#7c3aed 60%,#0891b2);box-shadow:var(--shadow)}.hero h1{margin:0 0 7px;font-size:28px}.hero p{margin:0;color:#ede9fe;line-height:1.75}.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:15px}.stat{padding:13px;border-radius:16px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.2)}.stat b{display:block;font-size:22px}.stat span{font-size:11px;color:#e0e7ff}.grid{display:grid;grid-template-columns:.86fr 1.14fr;gap:14px;margin-top:14px}.card{background:var(--panel);border-radius:var(--radius);padding:16px;box-shadow:0 10px 35px rgba(16,24,40,.07)}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.head h2{font-size:18px;margin:0}.badge{font-size:11px;font-weight:800;padding:6px 9px;border-radius:999px;background:#eef2ff;color:#4338ca}.tabs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;padding:5px;background:#f2f4f7;border-radius:14px;margin-bottom:13px}.tab{border:0;background:transparent;padding:10px 6px;border-radius:10px;color:#667085;font-weight:800}.tab.active{background:#fff;color:#4338ca;box-shadow:0 4px 14px rgba(16,24,40,.08)}.panel{display:none}.panel.active{display:block}label{display:block;font-size:12px;font-weight:800;color:#475467;margin:8px 0 5px}input,select{width:100%;border:1px solid var(--line);border-radius:13px;padding:12px;outline:none;background:#fff}input:focus,select:focus{border-color:#818cf8;box-shadow:0 0 0 4px rgba(99,102,241,.12)}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.btn{border:0;border-radius:13px;padding:12px 13px;font-weight:800}.primary{background:linear-gradient(135deg,var(--primary),var(--purple));color:#fff}.soft{background:#eef2ff;color:#4338ca}.green{background:#ecfdf3;color:#027a48}.danger{background:#fef3f2;color:#b42318}.full{width:100%}.devices,.files,.inbox{display:grid;gap:8px}.device,.file,.incoming{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:15px;background:#fff}.device.selected{background:#f8faff;border-color:#818cf8}.check{width:18px;height:18px;accent-color:#6366f1}.ico{width:39px;height:39px;border-radius:13px;display:grid;place-items:center;background:#f2f4ff;font-size:20px}.name{font-weight:800;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:11px;color:var(--muted);margin-top:3px;direction:ltr;text-align:right}.mini{border:0;border-radius:9px;padding:7px;background:#f2f4f7}.drop{text-align:center;padding:27px 14px;border:2px dashed #c7d2fe;border-radius:19px;background:linear-gradient(#fafaff,#fff)}.drop.drag{background:#eef2ff;border-color:#6366f1}.cloud{font-size:43px}.drop h3{margin:7px 0 4px}.drop p{margin:0 0 12px;color:var(--muted);font-size:12px}#fileInput,#singleInput,#folderInput{display:none}.status{white-space:pre-wrap;line-height:1.65;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#f8fafc;color:#475467;font-size:13px}.progress{height:7px;background:#eaecf0;border-radius:999px;overflow:hidden;margin-top:8px}.progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#4f46e5,#06b6d4);transition:.25s}.empty{text-align:center;color:var(--muted);padding:22px;border:1px dashed var(--line);border-radius:15px}.download{text-decoration:none;padding:9px 11px;border-radius:11px;background:#ecfdf3;color:#027a48;font-weight:800;font-size:12px}.install{padding:13px;border-radius:15px;background:#fffaeb;border:1px solid #fedf89;color:#7a2e0e;font-size:13px;line-height:1.7}.toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:100;background:#101828;color:#fff;padding:12px 14px;border-radius:13px;opacity:0;transform:translateY(18px);transition:.25s;text-align:center}.toast.show{opacity:1;transform:none}@media(max-width:850px){.grid{grid-template-columns:1fr}.app{padding:9px}.hero{padding:19px;border-radius:22px}.hero h1{font-size:24px}.brand small{display:none}}@media(max-width:520px){.row{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr 1fr}.stat{padding:10px}.stat b{font-size:19px}.card{padding:13px;border-radius:18px}.tabs{font-size:12px}.device,.file,.incoming{grid-template-columns:auto 1fr}.device .mini,.incoming .download{grid-column:2}.nav{border-radius:15px}}
 </style>
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div class="online" id="onlineState">● متصل</div></nav>
-<section class="hero"><h1>أرسل واستقبل بلا كابلات</h1><p>تعمل هذه الواجهة من الآيفون أو الآيباد أو أي متصفح داخل شبكة المنزل أو العمل.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.9</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
 <section class="card"><div class="tabs"><button id="sendTab" class="tab active" onclick="showTab('send')">📤 إرسال</button><button id="receiveTab" class="tab" onclick="showTab('receive')">📥 استقبال</button><button id="helpTab" class="tab" onclick="showTab('help')">ℹ️ مساعدة</button></div>
-<div id="sendPanel" class="panel active"><div id="dropZone" class="drop"><div class="cloud">☁️</div><h3>اختر الملفات أو اسحبها هنا</h3><p>يمكن اختيار عدة ملفات وإرسالها لعدة أجهزة معًا.</p><button class="btn primary" onclick="fileInput.click()">اختيار الملفات</button><input id="fileInput" type="file" multiple></div><div id="fileList" class="files" style="margin-top:10px"></div><div class="row" style="margin-top:10px"><button class="btn primary" onclick="sendFiles()">🚀 إرسال الآن</button><button class="btn danger" onclick="clearFiles()">مسح الملفات</button></div><div id="status" class="status">جاهز للإرسال والاستقبال.</div><div class="progress"><span id="progress"></span></div></div>
+<div id="sendPanel" class="panel active">
+<div class="row" style="margin-bottom:10px">
+  <button id="copyModeBtn" class="btn primary" onclick="setTransferMode('copy')">📋 نسخ</button>
+  <button id="moveModeBtn" class="btn soft" onclick="setTransferMode('move')">➡️ نقل</button>
+</div>
+<div id="moveModeNote" class="install" style="display:none;margin-bottom:10px"><b>النقل الحقيقي:</b> Safari/PWA لا يعطي الصفحة صلاحية حذف الملف الأصلي من On My iPhone بعد الإرسال. لذلك لن نحذف أي ملف من المتصفح تلقائيًا. استخدم نسخة iPhone Native إذا أردت حذف الأصل بعد نجاح النقل.</div>
+<div id="dropZone" class="drop"><div class="cloud">☁️</div><h3>ماذا تريد أن ترسل؟</h3><p>اختر ملفًا أو ملفات، أو أضف مجلدًا كاملًا. يمكنك الضغط على «إضافة مجلد» أكثر من مرة لإرسال عدة مجلدات معًا، بما فيها المجلدات الفرعية.</p><button class="btn primary full" style="margin-bottom:8px" onclick="openOnMyIPhonePicker()">📱 اختيار محتويات On My iPhone</button><div class="row"><button class="btn primary" onclick="singleInput.click()">📄 ملف</button><button class="btn primary" onclick="fileInput.click()">🗂️ ملفات</button></div><button class="btn soft full" style="margin-top:8px" onclick="folderInput.click()">📁 إضافة مجلد / إرسال الكل</button><p id="iosAllHint" style="margin-top:10px">على iPhone: افتح <b>On My iPhone</b> من نافذة Files ثم اختر المجلد الذي تريد نقله. إذا سمح iOS باختيار الجذر نفسه فسيتم إرسال كل ما بداخله؛ وإذا لم يسمح، اختر المجلدات الظاهرة واحدًا تلو الآخر.</p><input id="singleInput" type="file"><input id="fileInput" type="file" multiple><input id="folderInput" type="file" webkitdirectory directory multiple></div><div id="fileList" class="files" style="margin-top:10px"></div><div class="row" style="margin-top:10px"><button id="sendNowBtn" class="btn primary" onclick="sendFiles()">🚀 إرسال الآن</button><button id="cancelSendBtn" class="btn danger" style="display:none" onclick="cancelCurrentTransfer()">⛔ إيقاف</button></div><button class="btn soft full" style="margin-top:8px" onclick="clearFiles()">مسح الملفات</button><div id="status" class="status">جاهز للإرسال والاستقبال.</div>
+<div id="failureSummary" class="install" style="display:none;margin-top:10px"></div>
+<button id="downloadFailureReportBtn" class="btn soft full" style="display:none;margin-top:8px" onclick="downloadFailureReport()">⬇️ تنزيل تقرير أسباب الفشل</button>
+<div class="progress"><span id="progress"></span></div></div>
 <div id="receivePanel" class="panel"><div class="head"><h2>الملفات الواردة</h2><button class="btn soft" onclick="loadInbox()">تحديث</button></div><div id="inbox" class="inbox"></div></div>
-<div id="helpPanel" class="panel"><div class="install"><b>قبل الاستخدام:</b><br>• يجب أن يكون الكمبيوتر والهاتف على شبكة Wi‑Fi نفسها.<br>• اترك برنامج Windows مفتوحًا ليعمل كمركز اتصال للآيفون.<br>• لإرسال مباشر إلى Android، شغّل الاستقبال في تطبيق Android ثم أضف IP الخاص به.<br>• الملفات الواردة للآيفون تظهر في تبويب استقبال، ثم اضغط تنزيل.</div></div>
+<div id="helpPanel" class="panel"><div class="install"><b>قبل الاستخدام:</b><br>• يجب أن يكون الكمبيوتر والهاتف على شبكة Wi‑Fi نفسها.<br>• اترك برنامج Windows مفتوحًا ليعمل كمركز اتصال للآيفون.<br>• لإرسال مباشر إلى Android، شغّل الاستقبال في تطبيق Android ثم أضف IP الخاص به.<br>• النقل يعمل باتجاهين: أي جهاز يمكن أن يرسل أو يستقبل.<br>• الملفات الواردة للآيفون تظهر في تبويب استقبال، ثم اضغط تنزيل.</div></div>
 </section></div></div><div id="toast" class="toast"></div>
 <script>
-const ID_KEY='svln_web_id',NAME_KEY='svln_web_name',TYPE_KEY='svln_web_type',DIRECT_KEY='svln_direct_devices';let myId=localStorage.getItem(ID_KEY)||('web-'+Date.now()+'-'+Math.random().toString(16).slice(2));let files=[],hubDevices=[],directDevices=[],selected=new Set();localStorage.setItem(ID_KEY,myId);const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':b<1073741824?(b/1048576).toFixed(1)+' MB':(b/1073741824).toFixed(1)+' GB';function icon(t){return({iphone:'🍎',android:'🤖',laptop:'💻',web:'🌐',windows:'🖥️'})[t]||'📡'}function toast(t){$('toast').textContent=t;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),2200)}function loadLocal(){try{directDevices=JSON.parse(localStorage.getItem(DIRECT_KEY)||'[]')}catch{directDevices=[]}$('myName').value=localStorage.getItem(NAME_KEY)||((/iPhone|iPad/i.test(navigator.userAgent))?'آيفون جديد':'جهاز ويب');$('myType').value=localStorage.getItem(TYPE_KEY)||((/iPhone|iPad/i.test(navigator.userAgent))?'iphone':'web')}async function register(){const name=$('myName').value.trim()||'جهاز ويب',type=$('myType').value;localStorage.setItem(NAME_KEY,name);localStorage.setItem(TYPE_KEY,type);try{await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,name,type})});$('onlineState').textContent='● متصل';$('onlineState').style.background='#ecfdf3';await loadHubDevices()}catch{$('onlineState').textContent='● غير متصل';$('onlineState').style.background='#fef3f2'}}function saveIdentity(){register();toast('تم حفظ اسم الجهاز')}async function heartbeat(){const name=localStorage.getItem(NAME_KEY)||'جهاز ويب',type=localStorage.getItem(TYPE_KEY)||'web';try{await fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,name,type})})}catch{}}async function loadHubDevices(){try{const r=await fetch('/api/devices?current_id='+encodeURIComponent(myId));const d=await r.json();hubDevices=d.devices||[]}catch{hubDevices=[]}renderDevices()}function saveDirectDevice(){const name=$('directName').value.trim(),ip=$('directIp').value.trim();if(!/^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)){toast('عنوان IP غير صحيح');return}const old=directDevices.find(d=>d.ip===ip);if(old)old.name=name||old.name;else directDevices.unshift({name:name||('جهاز '+ip),ip,type:'android'});localStorage.setItem(DIRECT_KEY,JSON.stringify(directDevices));selected.add('direct:'+ip);$('directName').value='';$('directIp').value='';renderDevices()}function removeDirect(ip){directDevices=directDevices.filter(d=>d.ip!==ip);selected.delete('direct:'+ip);localStorage.setItem(DIRECT_KEY,JSON.stringify(directDevices));renderDevices()}function renderDevices(){const all=[{key:'windows',name:'هذا الكمبيوتر',type:'windows',sub:location.host},...hubDevices.map(d=>({key:'hub:'+d.id,name:d.name,type:d.type,sub:'متصل الآن'})),...directDevices.map(d=>({key:'direct:'+d.ip,name:d.name,type:d.type||'android',sub:d.ip+':5051',direct:true,ip:d.ip}))];$('deviceList').innerHTML=all.map(d=>`<div class="device ${selected.has(d.key)?'selected':''}"><input class="check" type="checkbox" ${selected.has(d.key)?'checked':''} onchange="toggleTarget('${esc(d.key)}',this.checked)"><div style="display:flex;gap:9px;align-items:center;min-width:0"><div class="ico">${icon(d.type)}</div><div style="min-width:0"><div class="name">${esc(d.name)}</div><div class="sub">${esc(d.sub)}</div></div></div>${d.direct?`<button class="mini" onclick="removeDirect('${esc(d.ip)}')">🗑</button>`:'<span>›</span>'}</div>`).join('')||'<div class="empty">لا توجد أجهزة.</div>';updateStats()}function toggleTarget(k,on){on?selected.add(k):selected.delete(k);renderDevices()}function selectAll(){const keys=['windows',...hubDevices.map(d=>'hub:'+d.id),...directDevices.map(d=>'direct:'+d.ip)];if(keys.length&&keys.every(k=>selected.has(k)))selected.clear();else keys.forEach(k=>selected.add(k));renderDevices()}function addFiles(list){const known=new Set(files.map(f=>f.name+'|'+f.size+'|'+f.lastModified));for(const f of list){const k=f.name+'|'+f.size+'|'+f.lastModified;if(!known.has(k)){files.push(f);known.add(k)}}renderFiles()}function renderFiles(){$('fileList').innerHTML=files.map((f,i)=>`<div class="file"><div class="ico">📄</div><div style="min-width:0"><div class="name">${esc(f.name)}</div><div class="sub">${fmt(f.size)}</div></div><button class="mini" onclick="files.splice(${i},1);renderFiles()">✕</button></div>`).join('');updateStats()}function clearFiles(){files=[];$('fileInput').value='';renderFiles()}function updateStats(){$('targetCount').textContent=selected.size;$('fileCount').textContent=files.length}async function postRaw(url,file){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-File-Size':String(file.size)},body:file});if(!r.ok)throw new Error('HTTP '+r.status);return r}async function sendFiles(){if(!selected.size){toast('حدد جهازًا واحدًا على الأقل');return}if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}const direct=[...selected].filter(k=>k.startsWith('direct:')).map(k=>k.slice(7)),hub=[...selected].filter(k=>k.startsWith('hub:')).map(k=>k.slice(4)),toWindows=selected.has('windows');const total=files.length*((toWindows?1:0)+direct.length+(hub.length?1:0));let done=0,ok=0,fail=0;$('progress').style.width='0%';for(const file of files){const jobs=[];if(toWindows)jobs.push(postRaw('/upload',file));for(const ip of direct)jobs.push(postRaw('http://'+ip+':5051/upload',file));if(hub.length){const sender=encodeURIComponent(localStorage.getItem(NAME_KEY)||'جهاز ويب');const url='/api/hub-upload?recipients='+encodeURIComponent(hub.join(','))+'&filename='+encodeURIComponent(file.name)+'&sender_name='+sender;jobs.push(fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status)}))}for(const job of jobs){try{await job;ok++}catch(e){fail++}done++;$('progress').style.width=Math.round(done/Math.max(1,total)*100)+'%';$('status').textContent=`جاري الإرسال...\nاكتمل ${done} من ${total}\nنجح: ${ok} | فشل: ${fail}`}}$('status').textContent=`انتهى الإرسال.\nنجح: ${ok}\nفشل: ${fail}`;toast(fail?'انتهى مع بعض الأخطاء':'تم الإرسال بنجاح')}async function loadInbox(){try{const r=await fetch('/api/inbox/'+encodeURIComponent(myId));const d=await r.json(),arr=d.files||[];$('inboxCount').textContent=arr.length;$('inbox').innerHTML=arr.length?arr.map(f=>`<div class="incoming"><div class="ico">📥</div><div style="min-width:0"><div class="name">${esc(f.filename)}</div><div class="sub">من ${esc(f.sender_name)} • ${fmt(f.size)}</div></div><a class="download" href="/api/download/${encodeURIComponent(f.id)}/${encodeURIComponent(myId)}" onclick="setTimeout(loadInbox,1500)">تنزيل</a></div>`).join(''):'<div class="empty">لا توجد ملفات واردة حاليًا.</div>'}catch{$('inbox').innerHTML='<div class="empty">تعذر تحميل الملفات الواردة.</div>'}}function showTab(t){for(const n of ['send','receive','help']){$(n+'Panel').classList.toggle('active',n===t);$(n+'Tab').classList.toggle('active',n===t)}if(t==='receive')loadInbox()}$('fileInput').addEventListener('change',e=>addFiles([...e.target.files]));const dz=$('dropZone');['dragenter','dragover'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.add('drag')}));['dragleave','drop'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.remove('drag')}));dz.addEventListener('drop',e=>addFiles([...e.dataTransfer.files]));loadLocal();register();loadInbox();setInterval(()=>{heartbeat();loadHubDevices();loadInbox()},5000);if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+const ID_KEY='svln_web_id',NAME_KEY='svln_web_name',TYPE_KEY='svln_web_type',DIRECT_KEY='svln_direct_devices';let myId=localStorage.getItem(ID_KEY)||('web-'+Date.now()+'-'+Math.random().toString(16).slice(2));let files=[],hubDevices=[],directDevices=[],selected=new Set(['windows']);localStorage.setItem(ID_KEY,myId);const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':b<1073741824?(b/1048576).toFixed(1)+' MB':(b/1073741824).toFixed(1)+' GB';function icon(t){return({iphone:'🍎',android:'🤖',laptop:'💻',web:'🌐',windows:'🖥️'})[t]||'📡'}function toast(t){$('toast').textContent=t;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),2200)}function loadLocal(){try{directDevices=JSON.parse(localStorage.getItem(DIRECT_KEY)||'[]')}catch{directDevices=[]}$('myName').value=localStorage.getItem(NAME_KEY)||((/iPhone|iPad/i.test(navigator.userAgent))?'آيفون جديد':'جهاز ويب');$('myType').value=localStorage.getItem(TYPE_KEY)||((/iPhone|iPad/i.test(navigator.userAgent))?'iphone':'web')}async function register(){const name=$('myName').value.trim()||'جهاز ويب',type=$('myType').value;localStorage.setItem(NAME_KEY,name);localStorage.setItem(TYPE_KEY,type);try{await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,name,type})});$('onlineState').textContent='● متصل';$('onlineState').style.background='#ecfdf3';await loadHubDevices()}catch{$('onlineState').textContent='● غير متصل';$('onlineState').style.background='#fef3f2'}}function saveIdentity(){register();toast('تم حفظ اسم الجهاز')}async function heartbeat(){const name=localStorage.getItem(NAME_KEY)||'جهاز ويب',type=localStorage.getItem(TYPE_KEY)||'web';try{await fetch('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,name,type})})}catch{}}async function loadHubDevices(){try{const r=await fetch('/api/devices?current_id='+encodeURIComponent(myId));const d=await r.json();hubDevices=d.devices||[]}catch{hubDevices=[]}renderDevices()}function saveDirectDevice(){const name=$('directName').value.trim(),ip=$('directIp').value.trim();if(!/^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)){toast('عنوان IP غير صحيح');return}const old=directDevices.find(d=>d.ip===ip);if(old)old.name=name||old.name;else directDevices.unshift({name:name||('جهاز '+ip),ip,type:'android'});localStorage.setItem(DIRECT_KEY,JSON.stringify(directDevices));selected.add('direct:'+ip);$('directName').value='';$('directIp').value='';renderDevices()}function removeDirect(ip){directDevices=directDevices.filter(d=>d.ip!==ip);selected.delete('direct:'+ip);localStorage.setItem(DIRECT_KEY,JSON.stringify(directDevices));renderDevices()}function renderDevices(){const all=[{key:'windows',name:'هذا الكمبيوتر',type:'windows',sub:location.host},...hubDevices.map(d=>({key:'hub:'+d.id,name:d.name,type:d.type,sub:'متصل الآن'})),...directDevices.map(d=>({key:'direct:'+d.ip,name:d.name,type:d.type||'android',sub:d.ip+':5051',direct:true,ip:d.ip}))];$('deviceList').innerHTML=all.map(d=>`<div class="device ${selected.has(d.key)?'selected':''}"><input class="check" type="checkbox" ${selected.has(d.key)?'checked':''} onchange="toggleTarget('${esc(d.key)}',this.checked)"><div style="display:flex;gap:9px;align-items:center;min-width:0"><div class="ico">${icon(d.type)}</div><div style="min-width:0"><div class="name">${esc(d.name)}</div><div class="sub">${esc(d.sub)}</div></div></div>${d.direct?`<button class="mini" onclick="removeDirect('${esc(d.ip)}')">🗑</button>`:'<span>›</span>'}</div>`).join('')||'<div class="empty">لا توجد أجهزة.</div>';updateStats()}function toggleTarget(k,on){on?selected.add(k):selected.delete(k);renderDevices()}function selectAll(){const keys=['windows',...hubDevices.map(d=>'hub:'+d.id),...directDevices.map(d=>'direct:'+d.ip)];if(keys.length&&keys.every(k=>selected.has(k)))selected.clear();else keys.forEach(k=>selected.add(k));renderDevices()}let transferMode='copy';
+function setTransferMode(mode){
+  transferMode=mode==='move'?'move':'copy';
+  $('copyModeBtn').className='btn '+(transferMode==='copy'?'primary':'soft');
+  $('moveModeBtn').className='btn '+(transferMode==='move'?'primary':'soft');
+  $('moveModeNote').style.display=transferMode==='move'?'block':'none';
+  if(transferMode==='move')toast('النقل مع حذف الأصل يحتاج نسخة iPhone Native');
+}
+function openOnMyIPhonePicker(){toast('افتح On My iPhone ثم اختر المجلد المطلوب');folderInput.click()}function relPath(f){return (f.webkitRelativePath||f.name||'').replace(/^\/+/, '')}function addFiles(list){const known=new Set(files.map(f=>relPath(f)+'|'+f.size+'|'+f.lastModified));for(const f of list){const k=relPath(f)+'|'+f.size+'|'+f.lastModified;if(!known.has(k)){files.push(f);known.add(k)}}renderFiles()}function renderFiles(){$('fileList').innerHTML=files.map((f,i)=>`<div class="file"><div class="ico">${f.webkitRelativePath?'📁':'📄'}</div><div style="min-width:0"><div class="name">${esc(f.name)}</div><div class="sub">${esc(relPath(f))} • ${fmt(f.size)}</div></div><button class="mini" onclick="files.splice(${i},1);renderFiles()">✕</button></div>`).join('');updateStats()}function clearFiles(){files=[];$('fileInput').value='';$('singleInput').value='';$('folderInput').value='';renderFiles()}function updateStats(){$('targetCount').textContent=selected.size;$('fileCount').textContent=files.length}let wakeLock=null;
+let transferWakeActive=false;
+
+async function keepScreenAwake(){
+  transferWakeActive=true;
+  if(!('wakeLock' in navigator))return;
+  try{
+    if(wakeLock)return;
+    wakeLock=await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release',()=>{
+      wakeLock=null;
+      if(transferWakeActive && document.visibilityState==='visible'){
+        setTimeout(()=>keepScreenAwake(),250);
+      }
+    },{once:true});
+  }catch(e){
+    wakeLock=null;
+  }
+}
+
+async function releaseScreenAwake(){
+  transferWakeActive=false;
+  try{
+    if(wakeLock){
+      const lock=wakeLock;
+      wakeLock=null;
+      await lock.release();
+    }
+  }catch(e){}
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(transferWakeActive && document.visibilityState==='visible'){
+    keepScreenAwake();
+  }
+});
+
+
+
+let lastFailureReport=[];
+
+function classifyFailure(message){
+  const m=String(message||'').toLowerCase();
+  if(m.includes('تم إيقاف النقل'))return 'تم إيقاف النقل يدويًا';
+  if(m.includes('مهلة')||m.includes('timeout')||m.includes('abort'))return 'انتهاء مهلة الاتصال';
+  if(m.includes('http 422')||m.includes('invalid_name')||m.includes('اسم'))return 'اسم أو مسار غير مقبول';
+  if(m.includes('http 409')||m.includes('offset_mismatch')||m.includes('exists'))return 'تعارض ملف أو عدم تطابق الاستكمال';
+  if(m.includes('http 500')||m.includes('receive failed')||m.includes('write')||m.includes('finalize'))return 'خطأ في الحفظ على الجهاز المستقبل';
+  if(m.includes('network')||m.includes('failed to fetch')||m.includes('load failed')||m.includes('الاتصال'))return 'انقطاع أو مشكلة شبكة';
+  if(m.includes('notreadable')||m.includes('permission')||m.includes('denied')||m.includes('تعذر فتح')||m.includes('تعذر قراءة'))return 'تعذر قراءة الملف من المصدر';
+  return 'سبب غير محدد';
+}
+
+function renderFailureReport(report){
+  lastFailureReport=report||[];
+  const box=$('failureSummary'),btn=$('downloadFailureReportBtn');
+  if(!lastFailureReport.length){
+    box.style.display='none';
+    btn.style.display='none';
+    return;
+  }
+  const counts={};
+  for(const row of lastFailureReport)counts[row.reason]=(counts[row.reason]||0)+1;
+  const parts=Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([reason,count])=>'• '+reason+': '+count);
+  box.innerHTML='<b>تقرير أسباب الفشل ('+lastFailureReport.length+')</b><br>'+parts.map(esc).join('<br>');
+  box.style.display='block';
+  btn.style.display='block';
+}
+
+function csvCell(value){
+  return '"'+String(value??'').replace(/"/g,'""')+'"';
+}
+
+function downloadFailureReport(){
+  if(!lastFailureReport.length){toast('لا يوجد تقرير فشل');return}
+  const header=['التاريخ','الملف','المسار','الحجم','الوجهة','السبب','رسالة الخطأ'];
+  const rows=[header,...lastFailureReport.map(r=>[
+    r.time,r.name,r.path,r.size,r.target,r.reason,r.error
+  ])];
+  const csv='\ufeff'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='SendViaLocalNet-failure-report-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+
+let transferRunning=false;
+let transferCancelled=false;
+let activeControllers=new Set();
+
+function setSendingUi(active){
+  const btn=$('sendNowBtn'),cancel=$('cancelSendBtn');
+  if(btn){
+    btn.disabled=active;
+    btn.textContent=active?'⏳ الإرسال يعمل...':'🚀 إرسال الآن';
+  }
+  if(cancel)cancel.style.display=active?'block':'none';
+}
+
+function cancelCurrentTransfer(){
+  if(!transferRunning)return;
+  transferCancelled=true;
+  for(const controller of [...activeControllers]){
+    try{controller.abort()}catch(e){}
+  }
+  activeControllers.clear();
+  $('status').textContent='جارٍ إيقاف النقل بأمان... يمكنك إعادة الإرسال بعد انتهاء العمليات الحالية.';
+  toast('تم طلب إيقاف النقل');
+}
+
+async function fetchWithTimeout(url,options={},timeoutMs=90000){
+  const controller=new AbortController();
+  activeControllers.add(controller);
+  const external=options.signal;
+  let externalAbort;
+  if(external){
+    externalAbort=()=>controller.abort();
+    if(external.aborted)controller.abort();
+    else external.addEventListener('abort',externalAbort,{once:true});
+  }
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const response=await fetch(url,{...options,signal:controller.signal});
+    return response;
+  }catch(e){
+    if(controller.signal.aborted){
+      if(transferCancelled)throw new Error('تم إيقاف النقل');
+      throw new Error('انتهت مهلة الاتصال — ستتم إعادة المحاولة تلقائيًا');
+    }
+    throw e;
+  }finally{
+    clearTimeout(timer);
+    activeControllers.delete(controller);
+    if(external&&externalAbort)external.removeEventListener('abort',externalAbort);
+  }
+}
+
+async function getResumeState(base,file){
+  const rp=relPath(file);
+  const q=new URLSearchParams();
+  q.set('filename',file.name);
+  q.set('size',String(file.size));
+  if(rp&&rp!==file.name)q.set('relative',rp);
+  try{
+    const r=await fetchWithTimeout(base+'/api/resume-status?'+q.toString(),{cache:'no-store'},10000);
+    if(!r.ok)return null;
+    const d=await r.json();
+    return d&&d.ok?d:null;
+  }catch(e){
+    return null;
+  }
+}
+
+async function postRawLegacy(url,file){
+  const headers={
+    'Content-Type':'application/octet-stream',
+    'X-File-Name':encodeURIComponent(file.name),
+    'X-File-Size':String(file.size),
+    'X-Conflict-Policy':'skip'
+  };
+  const rp=relPath(file);
+  if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
+  let lastError='';
+  for(let attempt=1;attempt<=3;attempt++){
+    if(transferCancelled)throw new Error('تم إيقاف النقل');
+    try{
+      const r=await fetchWithTimeout(url,{method:'POST',headers,body:file},60000);
+      if(r.ok)return true;
+      lastError='HTTP '+r.status;
+    }catch(e){
+      lastError=e&&e.message?e.message:String(e);
+    }
+    await new Promise(resolve=>setTimeout(resolve,500*attempt));
+  }
+  throw new Error(lastError||'تعذر الإرسال بعد 3 محاولات');
+}
+
+async function postRaw(base,file){
+  const chunkSize=50*1024*1024;
+  const fastThreshold=8*1024*1024;
+  const rp=relPath(file);
+
+  // Thousands of small files are much faster with one POST and retry,
+  // avoiding 2-3 resume-status requests for every tiny file.
+  if(file.size<fastThreshold){
+    return postRawLegacy(base+'/upload',file);
+  }
+
+  let state=await getResumeState(base,file);
+
+  // Older receiver: keep backward compatibility.
+  if(!state)return postRawLegacy(base+'/upload',file);
+  if(state.completed)return true;
+
+  let offset=Math.max(0,Math.min(file.size,Number(state.offset||0)));
+
+  while(offset<file.size){
+    const end=Math.min(file.size,offset+chunkSize);
+    const body=file.slice(offset,end);
+    let advanced=false;
+    let lastError='';
+
+    for(let attempt=1;attempt<=3&&!advanced;attempt++){
+      if(transferCancelled)throw new Error('تم إيقاف النقل');
+      const headers={
+        'Content-Type':'application/octet-stream',
+        'X-File-Name':encodeURIComponent(file.name),
+        'X-File-Size':String(file.size),
+        'X-Transfer-Offset':String(offset),
+        'X-Conflict-Policy':'skip'
+      };
+      if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
+
+      try{
+        const r=await fetchWithTimeout(base+'/upload',{method:'POST',headers,body},180000);
+        if(r.ok){
+          advanced=true;
+          break;
+        }
+        lastError='HTTP '+r.status;
+      }catch(e){
+        lastError=e&&e.message?e.message:String(e);
+      }
+
+      const refreshed=await getResumeState(base,file);
+      if(refreshed&&refreshed.completed)return true;
+      if(refreshed){
+        const remoteOffset=Math.max(0,Math.min(file.size,Number(refreshed.offset||0)));
+        if(remoteOffset!==offset){
+          offset=remoteOffset;
+          advanced=true;
+          break;
+        }
+      }
+
+      await new Promise(resolve=>setTimeout(resolve,500*attempt));
+    }
+
+    if(!advanced)throw new Error(lastError||'تعذر استكمال الملف بعد 3 محاولات');
+
+    // A successful 2xx response is sent only after the receiver has persisted
+    // the whole chunk. Avoid another status GET here; it was a major source of
+    // latency for large transfers and thousands of files.
+    if(offset<end)offset=end;
+  }
+
+  return true;
+}
+
+async function sendFiles(){
+  if(transferRunning){
+    toast('الإرسال يعمل بالفعل — لا حاجة للضغط مرة أخرى');
+    return;
+  }
+  if(!selected.size){toast('حدد جهازًا واحدًا على الأقل');return}
+  if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}
+  transferRunning=true;
+  transferCancelled=false;
+  lastFailureReport=[];
+  renderFailureReport([]);
+  setSendingUi(true);
+  if(transferMode==='move'){
+    toast('سيتم النسخ فقط؛ Safari لا يسمح بحذف الأصل تلقائيًا');
+  }
+
+  await keepScreenAwake();
+  const direct=[...selected].filter(k=>k.startsWith('direct:')).map(k=>k.slice(7));
+  const hub=[...selected].filter(k=>k.startsWith('hub:')).map(k=>k.slice(4));
+  const toWindows=selected.has('windows');
+
+  const tasks=[];
+  for(const file of files){
+    if(toWindows)tasks.push({name:file.name,path:relPath(file),size:file.size,target:'Windows',run:()=>postRaw('',file)});
+    for(const ip of direct)tasks.push({name:file.name,path:relPath(file),size:file.size,target:ip,run:()=>postRaw('http://'+ip+':5051',file)});
+    if(hub.length){
+      tasks.push({name:file.name,path:relPath(file),size:file.size,target:'Hub',run:async()=>{
+        const sender=encodeURIComponent(localStorage.getItem(NAME_KEY)||'جهاز ويب');
+        const url='/api/hub-upload?recipients='+encodeURIComponent(hub.join(','))+'&filename='+encodeURIComponent(file.name)+'&sender_name='+sender;
+        let lastError='';
+        for(let attempt=1;attempt<=3;attempt++){
+          try{
+            const rr=await fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file},120000);
+            if(rr.ok)return true;
+            lastError='HTTP '+rr.status;
+          }catch(e){lastError=e&&e.message?e.message:String(e)}
+          await new Promise(resolve=>setTimeout(resolve,400*attempt));
+        }
+        throw new Error(lastError||'فشل الرفع');
+      }});
+    }
+  }
+
+  const total=tasks.length;
+  let next=0,done=0,ok=0,fail=0;
+  const failed=[];
+  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const workerCount=Math.min(isIOS?3:6,Math.max(1,total));
+  $('progress').style.width='0%';
+  $('status').textContent='وضع Turbo يعمل ⚡\n'+workerCount+' عمليات بالتوازي.\nيوجد Timeout تلقائي واستكمال عند توقف أي ملف.';
+
+  async function worker(){
+    while(true){
+      if(transferCancelled)return;
+      const index=next++;
+      if(index>=total)return;
+      const task=tasks[index];
+      try{
+        await task.run();
+        ok++;
+      }catch(e){
+        fail++;
+        const error=e&&e.message?e.message:String(e);
+        failed.push(task.name+' — '+error);
+        lastFailureReport.push({
+          time:new Date().toLocaleString(),
+          name:task.name,
+          path:task.path||task.name,
+          size:task.size||0,
+          target:task.target||'غير معروف',
+          reason:classifyFailure(error),
+          error
+        });
+      }
+      done++;
+      $('progress').style.width=Math.round(done/Math.max(1,total)*100)+'%';
+      $('status').textContent='وضع Turbo ⚡\nاكتمل '+done+' من '+total+'\nنجح: '+ok+' | فشل: '+fail+(failed.length?'\nآخر فشل: '+failed[failed.length-1]:'');
+    }
+  }
+
+  try{
+    await Promise.all(Array.from({length:workerCount},()=>worker()));
+  }catch(e){
+    const error=e&&e.message?e.message:String(e);
+    failed.push(error);
+    lastFailureReport.push({
+      time:new Date().toLocaleString(),
+      name:'عملية النقل',
+      path:'',
+      size:0,
+      target:'عام',
+      reason:classifyFailure(error),
+      error
+    });
+  }finally{
+    for(const controller of [...activeControllers]){try{controller.abort()}catch(e){}}
+    activeControllers.clear();
+    await releaseScreenAwake();
+    transferRunning=false;
+    setSendingUi(false);
+  }
+
+  if(transferCancelled){
+    if(!lastFailureReport.length){
+      lastFailureReport.push({
+        time:new Date().toLocaleString(),
+        name:'عملية النقل',
+        path:'',
+        size:0,
+        target:'عام',
+        reason:'تم إيقاف النقل يدويًا',
+        error:'تم إيقاف النقل قبل اكتمال جميع الملفات'
+      });
+    }
+    renderFailureReport(lastFailureReport);
+    $('status').textContent='تم إيقاف النقل. الملفات المكتملة محفوظة، وعند إعادة الإرسال سيستكمل ما يمكن استكماله.';
+    toast('تم إيقاف النقل');
+  }else{
+    renderFailureReport(lastFailureReport);
+    $('status').textContent='انتهى الإرسال.\nنجح: '+ok+'\nفشل: '+fail+(failed.length?'\n\nآخر الملفات الفاشلة:\n'+failed.slice(-8).join('\n'):'');
+    toast(fail?'انتهى مع بعض الأخطاء':'تم الإرسال بنجاح');
+  }
+}
+
+async function loadInbox(){try{const r=await fetch('/api/inbox/'+encodeURIComponent(myId));const d=await r.json(),arr=d.files||[];$('inboxCount').textContent=arr.length;$('inbox').innerHTML=arr.length?arr.map(f=>`<div class="incoming"><div class="ico">📥</div><div style="min-width:0"><div class="name">${esc(f.filename)}</div><div class="sub">من ${esc(f.sender_name)} • ${fmt(f.size)}</div></div><a class="download" href="/api/download/${encodeURIComponent(f.id)}/${encodeURIComponent(myId)}" onclick="setTimeout(loadInbox,1500)">تنزيل</a></div>`).join(''):'<div class="empty">لا توجد ملفات واردة حاليًا.</div>'}catch{$('inbox').innerHTML='<div class="empty">تعذر تحميل الملفات الواردة.</div>'}}function showTab(t){for(const n of ['send','receive','help']){$(n+'Panel').classList.toggle('active',n===t);$(n+'Tab').classList.toggle('active',n===t)}if(t==='receive')loadInbox()}$('singleInput').addEventListener('change',e=>addFiles([...e.target.files]));$('fileInput').addEventListener('change',e=>addFiles([...e.target.files]));$('folderInput').addEventListener('change',e=>addFiles([...e.target.files]));const dz=$('dropZone');['dragenter','dragover'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.add('drag')}));['dragleave','drop'].forEach(x=>dz.addEventListener(x,e=>{e.preventDefault();dz.classList.remove('drag')}));dz.addEventListener('drop',e=>addFiles([...e.dataTransfer.files]));loadLocal();register();loadInbox();setInterval(()=>{heartbeat();loadHubDevices();loadInbox()},5000);if('caches' in window){caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{})}
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(reg=>reg.update())).catch(()=>{});
+  navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).catch(()=>{});
+}
 </script>
 </body>
 </html>

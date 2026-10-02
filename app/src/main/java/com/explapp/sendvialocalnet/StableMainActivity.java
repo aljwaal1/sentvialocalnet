@@ -3,6 +3,7 @@ package com.explapp.sendvialocalnet;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
+import android.database.Cursor;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -11,9 +12,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -32,9 +35,10 @@ import java.util.Set;
 
 public class StableMainActivity extends Activity {
     private static final int PICK_FILES = 1401;
+    private static final int PICK_FOLDER = 1402;
 
     private final ArrayList<DeviceRecord> devices = new ArrayList<DeviceRecord>();
-    private final ArrayList<Uri> files = new ArrayList<Uri>();
+    private final ArrayList<FileSender.SendItem> files = new ArrayList<FileSender.SendItem>();
     private DeviceStore store;
     private DeviceScanner scanner;
     private TransferReceiver receiver;
@@ -108,7 +112,10 @@ public class StableMainActivity extends Activity {
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
 
         LinearLayout hero = card(Color.rgb(67, 56, 202));
-        hero.addView(text("نقل محلي Pro", 25, Color.WHITE, true));
+        LinearLayout heroTitle = row();
+        heroTitle.addView(text("نقل محلي Pro", 25, Color.WHITE, true), new LinearLayout.LayoutParams(0, -2, 1));
+        heroTitle.addView(text("v2.1.9", 12, Color.rgb(224, 231, 255), true));
+        hero.addView(heroTitle);
         hero.addView(text("لا تقلق من تغيّر IP — التطبيق يحدّثه تلقائيًا", 13, Color.rgb(224, 231, 255), false));
         receiverState = text("جاري تشغيل الاستقبال...", 13, Color.rgb(209, 250, 229), true);
         receiverState.setPadding(0, dp(10), 0, 0);
@@ -147,11 +154,13 @@ public class StableMainActivity extends Activity {
         }});
 
         LinearLayout sendCard = card(Color.WHITE);
-        sendCard.addView(title("2. اختر الملفات", "يمكن اختيار عدة ملفات وإرسالها لعدة أجهزة"));
+        sendCard.addView(title("2. اختر الملفات أو المجلدات", "أضف ملفًا أو عدة ملفات أو مجلدًا كاملًا، ويمكن إضافة أكثر من مجلد"));
         LinearLayout fileButtons = row();
-        Button choose = button("اختيار الملفات", Color.rgb(14, 165, 233), Color.WHITE);
+        Button choose = button("اختيار ملفات", Color.rgb(14, 165, 233), Color.WHITE);
+        Button chooseFolder = button("إضافة مجلد", Color.rgb(79, 70, 229), Color.WHITE);
         Button clearFiles = button("مسح", Color.rgb(248, 250, 252), Color.rgb(71, 84, 103));
-        fileButtons.addView(choose, weight(3, 5));
+        fileButtons.addView(choose, weight(2, 5));
+        fileButtons.addView(chooseFolder, weight(2, 5));
         fileButtons.addView(clearFiles, weight(1, 0));
         sendCard.addView(fileButtons);
         fileSummary = info("لم يتم اختيار ملفات");
@@ -170,6 +179,7 @@ public class StableMainActivity extends Activity {
         root.addView(sendCard, bottom(11));
 
         choose.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { chooseFiles(); }});
+        chooseFolder.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { chooseFolder(); }});
         clearFiles.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { files.clear(); renderFiles(); }});
         sendButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { sendFiles(); }});
 
@@ -318,26 +328,137 @@ public class StableMainActivity extends Activity {
         startActivityForResult(Intent.createChooser(intent, "اختر الملفات"), PICK_FILES);
     }
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_FILES || resultCode != RESULT_OK || data == null) return;
-        Set<String> seen = new LinkedHashSet<String>();
-        for (Uri u : files) seen.add(u.toString());
-        ClipData clip = data.getClipData();
-        if (clip != null) for (int i = 0; i < clip.getItemCount(); i++) addUri(clip.getItemAt(i).getUri(), seen);
-        else addUri(data.getData(), seen);
-        renderFiles();
+    private void chooseFolder() {
+        if (Build.VERSION.SDK_INT < 21) {
+            toast("اختيار المجلدات يحتاج Android 5 أو أحدث");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, PICK_FOLDER);
     }
 
-    private void addUri(Uri uri, Set<String> seen) {
-        if (uri == null || !seen.add(uri.toString())) return;
-        files.add(uri);
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+
+        if (requestCode == PICK_FILES) {
+            Set<String> seen = new LinkedHashSet<String>();
+            for (FileSender.SendItem item : files) seen.add(item.uri.toString() + "|" + item.relativePath);
+            ClipData clip = data.getClipData();
+            if (clip != null) {
+                for (int i = 0; i < clip.getItemCount(); i++) addFileUri(clip.getItemAt(i).getUri(), "", seen);
+            } else {
+                addFileUri(data.getData(), "", seen);
+            }
+            renderFiles();
+            return;
+        }
+
+        if (requestCode == PICK_FOLDER && Build.VERSION.SDK_INT >= 21) {
+            Uri tree = data.getData();
+            if (tree == null) return;
+            try {
+                int takeFlags = data.getFlags() &
+                        (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                if ((takeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+                    getContentResolver().takePersistableUriPermission(tree, takeFlags);
+                }
+            } catch (Exception ignored) {}
+            String rootName = queryDisplayName(tree);
+            if (rootName == null || rootName.length() == 0) rootName = "Folder";
+            Set<String> seen = new LinkedHashSet<String>();
+            for (FileSender.SendItem item : files) seen.add(item.uri.toString() + "|" + item.relativePath);
+            int before = files.size();
+            addDirectoryItem(tree, rootName, seen);
+            addTreeRecursive(tree, DocumentsContract.getTreeDocumentId(tree), rootName, seen);
+            renderFiles();
+            toast("تمت إضافة المجلد: " + rootName + " (" + (files.size() - before) + " عنصر)");
+        }
+    }
+
+    private void addFileUri(Uri uri, String relativePath, Set<String> seen) {
+        if (uri == null) return;
+        String key = uri.toString() + "|" + relativePath;
+        if (!seen.add(key)) return;
+        files.add(new FileSender.SendItem(uri, relativePath));
         try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         catch (Exception ignored) {}
     }
 
+    private void addTreeRecursive(Uri treeUri, String parentDocumentId, String relativeDir, Set<String> seen) {
+        if (Build.VERSION.SDK_INT < 21) return;
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(children,
+                    new String[] {
+                            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                            DocumentsContract.Document.COLUMN_MIME_TYPE
+                    }, null, null, null);
+            if (cursor == null) return;
+            int idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+            int mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+            while (cursor.moveToNext()) {
+                String documentId = idIndex >= 0 ? cursor.getString(idIndex) : null;
+                String name = nameIndex >= 0 ? cursor.getString(nameIndex) : "item";
+                String mime = mimeIndex >= 0 ? cursor.getString(mimeIndex) : "";
+                if (documentId == null) continue;
+                Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    String childPath = relativeDir + "/" + safePathPart(name);
+                    addDirectoryItem(documentUri, childPath, seen);
+                    addTreeRecursive(treeUri, documentId, childPath, seen);
+                } else {
+                    addFileUri(documentUri, relativeDir + "/" + safePathPart(name), seen);
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+    }
+
+    private void addDirectoryItem(Uri uri, String relativePath, Set<String> seen) {
+        String key = "dir|" + relativePath;
+        if (!seen.add(key)) return;
+        files.add(new FileSender.SendItem(uri, relativePath, true));
+    }
+
+    private String queryDisplayName(Uri uri) {
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(uri,
+                    new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME }, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return uri == null ? "" : uri.getLastPathSegment();
+    }
+
+    private String safePathPart(String value) {
+        // Preserve the exact user-visible file/folder name. Do not silently rename it.
+        // '/' cannot occur inside a single Android document component; receivers validate
+        // platform-specific invalid names and report them instead of mutating them.
+        if (value == null || value.length() == 0) return "item";
+        return value;
+    }
+
     private void renderFiles() {
-        fileSummary.setText(files.isEmpty() ? "لم يتم اختيار ملفات" : "تم اختيار " + files.size() + " ملف");
+        if (files.isEmpty()) {
+            fileSummary.setText("لم يتم اختيار ملفات أو مجلدات");
+        } else {
+            int directories = 0, regularFiles = 0;
+            for (FileSender.SendItem item : files) {
+                if (item.directory) directories++; else regularFiles++;
+            }
+            fileSummary.setText("ملفات: " + regularFiles + " • مجلدات: " + directories);
+        }
         int selected = 0;
         synchronized (devices) { for (DeviceRecord d : devices) if (d.selected) selected++; }
         sendButton.setEnabled(selected > 0 && !files.isEmpty());
@@ -346,10 +467,11 @@ public class StableMainActivity extends Activity {
     private void sendFiles() {
         final ArrayList<DeviceRecord> targets = new ArrayList<DeviceRecord>();
         synchronized (devices) { for (DeviceRecord d : devices) if (d.selected) targets.add(d); }
-        if (targets.isEmpty() || files.isEmpty()) { toast("حدد جهازًا واختر الملفات"); return; }
+        if (targets.isEmpty() || files.isEmpty()) { toast("حدد جهازًا واختر ملفات أو مجلدات"); return; }
         sendButton.setEnabled(false);
         progress.setProgress(0);
-        sender.send(targets, new ArrayList<Uri>(files), new FileSender.Listener() {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        sender.sendItems(targets, new ArrayList<FileSender.SendItem>(files), new FileSender.Listener() {
             @Override public void onProgress(final int done, final int total, final int ok, final int failed) {
                 runOnUiThread(new Runnable() { @Override public void run() {
                     progress.setProgress(done * 100 / Math.max(1, total));
@@ -359,6 +481,7 @@ public class StableMainActivity extends Activity {
             @Override public void onLog(String message) { }
             @Override public void onDone(final int ok, final int failed) {
                 runOnUiThread(new Runnable() { @Override public void run() {
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     sendButton.setEnabled(true);
                     if (failed == 0) toast("تم الإرسال بنجاح");
                 }});
@@ -397,6 +520,7 @@ public class StableMainActivity extends Activity {
     private void requestStoragePermission() { if(Build.VERSION.SDK_INT>=23 && Build.VERSION.SDK_INT<=32 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.WRITE_EXTERNAL_STORAGE},5); }
 
     @Override protected void onDestroy() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if(scanner!=null)scanner.shutdown(); if(receiver!=null)receiver.shutdown(); if(sender!=null)sender.shutdown(); super.onDestroy();
     }
 }

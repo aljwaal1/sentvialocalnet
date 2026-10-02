@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject var service: LocalTransferService
     @State private var showImporter = false
+    @State private var showFolderImporter = false
+    @State private var showAllOnMyIPhoneImporter = false
 
     var body: some View {
         NavigationView {
@@ -18,6 +20,11 @@ struct ContentView: View {
             }
             .navigationTitle("نقل محلي Pro")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Text("v2.1.9")
+                        .font(.caption.bold())
+                        .foregroundColor(.secondary)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { service.discover() } label: { Image(systemName: "arrow.clockwise") }
                 }
@@ -26,6 +33,21 @@ struct ContentView: View {
                 switch result {
                 case .success(let urls): service.prepareFiles(urls)
                 case .failure(let error): service.status = "تعذر اختيار الملفات: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    if let folder = urls.first { service.addFolder(folder) }
+                case .failure(let error): service.status = "تعذر اختيار المجلد: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(isPresented: $showAllOnMyIPhoneImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                switch result {
+                case .success(let urls):
+                    service.addPickedItems(urls)
+                case .failure(let error):
+                    service.status = "تعذر اختيار محتويات On My iPhone: \(error.localizedDescription)"
                 }
             }
         }
@@ -41,6 +63,7 @@ struct ContentView: View {
                 Spacer()
                 Text(service.localIP).font(.caption.monospaced())
             }
+            Text("إرسال ⇄ استقبال باتجاهين").font(.caption).fontWeight(.semibold)
             Text(service.status).font(.subheadline).foregroundColor(.secondary)
             if service.sending {
                 ProgressView(value: service.progress)
@@ -88,26 +111,81 @@ struct ContentView: View {
     private var filesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("الإرسال").font(.headline)
+
+            Picker("طريقة الإرسال", selection: $service.transferMode) {
+                Text("نسخ").tag("copy")
+                Text("نقل").tag("move")
+            }
+            .pickerStyle(.segmented)
+
+            if service.transferMode == "move" {
+                Text("النقل يحذف الأصل فقط بعد نجاح الإرسال إلى كل الأجهزة المحددة. إذا تعذر الحذف، يبقى الأصل كما هو.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+
             HStack {
-                Button { showImporter = true } label: { Label("اختيار ملفات", systemImage: "doc.badge.plus") }
+                Button { showImporter = true } label: { Label("ملف / ملفات", systemImage: "doc.badge.plus") }
                     .buttonStyle(.borderedProminent)
+                Button { showFolderImporter = true } label: { Label("إضافة مجلد", systemImage: "folder.fill.badge.plus") }
+                    .buttonStyle(.bordered)
                 if !service.pendingFiles.isEmpty {
                     Button("مسح") { service.clearPendingFiles() }.buttonStyle(.bordered)
                 }
             }
+
+            Button { showAllOnMyIPhoneImporter = true } label: {
+                Label("اختيار كل محتويات On My iPhone", systemImage: "iphone.gen3")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
             if service.pendingFiles.isEmpty {
-                Text("لم يتم اختيار ملفات بعد.").font(.subheadline).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("لإرسال كل ما يظهر لك داخل On My iPhone اضغط الزر بالأعلى، ثم افتح On My iPhone واختر كل الملفات والمجلدات التي يسمح iOS بتحديدها.").font(.subheadline).foregroundColor(.secondary)
+                    Text("iOS لا يسمح للتطبيق بالدخول تلقائيًا إلى بيانات التطبيقات المخفية؛ يمكن إرسال فقط العناصر الظاهرة في Files والتي تمنحها للتطبيق.").font(.caption).foregroundColor(.secondary)
+                }
             } else {
-                ForEach(service.pendingFiles) { file in
-                    HStack {
-                        Image(systemName: "doc")
-                        Text(file.name).lineLimit(1)
-                        Spacer()
-                        Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
+                if !service.selectedFolders.isEmpty {
+                    Text("المجلدات المختارة").font(.subheadline).fontWeight(.semibold)
+                    ForEach(service.selectedFolders) { folder in
+                        HStack(spacing: 10) {
+                            Button { service.toggleFolder(folder.id) } label: {
+                                Image(systemName: folder.selected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(folder.selected ? .accentColor : .secondary)
+                                    .font(.title3)
+                            }
+                            .buttonStyle(.plain)
+                            Image(systemName: "folder.fill").foregroundColor(.accentColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(folder.name).fontWeight(.semibold).lineLimit(1)
+                                Text("\(folder.itemCount) عنصر").font(.caption).foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) { service.removeFolder(folder.id) } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 4)
+                        Divider()
                     }
                 }
+
+                let looseFiles = service.pendingFiles.filter { $0.rootFolderId == nil }
+                if !looseFiles.isEmpty {
+                    Text("الملفات").font(.subheadline).fontWeight(.semibold)
+                    ForEach(looseFiles) { file in
+                        HStack {
+                            Image(systemName: "doc")
+                            Text(file.name).lineLimit(1)
+                            Spacer()
+                            Text(formatBytes(file.size)).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+
                 Button { service.sendSelected() } label: {
-                    Label(service.sending ? "جاري الإرسال…" : "إرسال إلى الأجهزة المحددة", systemImage: "paperplane.fill")
+                    Label(service.sending ? "جاري الإرسال…" : (service.transferMode == "move" ? "نقل إلى الأجهزة المحددة" : "نسخ إلى الأجهزة المحددة"), systemImage: service.transferMode == "move" ? "arrow.right.doc.on.clipboard" : "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -119,7 +197,7 @@ struct ContentView: View {
 
     private var receivedCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("الملفات المستلمة").font(.headline)
+            Text("الاستقبال من Windows / Android / iPhone").font(.headline)
             if service.receivedFiles.isEmpty {
                 Text("ستظهر الملفات التي تصل إلى هذا iPhone هنا، وتُحفظ داخل Files > On My iPhone > نقل محلي Pro.")
                     .font(.subheadline).foregroundColor(.secondary)

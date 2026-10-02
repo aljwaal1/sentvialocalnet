@@ -31,6 +31,7 @@ except Exception:
 
 APP_NAME = "SendViaLocalNet"
 DISPLAY_NAME = "نقل محلي Pro"
+APP_VERSION = "2.1.9"
 PORT = 5051
 BUFFER_SIZE = 1024 * 256
 CLIENT_TIMEOUT = 35
@@ -55,23 +56,34 @@ def downloads_dir() -> Path:
     return path
 
 
+WINDOWS_INVALID_CHARS = set('\\/:*?"<>|')
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
 def safe_filename(name: str) -> str:
-    value = (name or f"file_{int(time.time())}.bin").strip()
-    for char in '\\/:*?"<>|':
-        value = value.replace(char, "_")
-    return value[:220] or f"file_{int(time.time())}.bin"
+    """Return the original component unchanged when it is valid on Windows.
+    Never silently rename transferred files/folders.
+    """
+    value = str(name or "")
+    if not value or value in (".", ".."):
+        raise ValueError("اسم ملف/مجلد غير صالح")
+    if any(ch in WINDOWS_INVALID_CHARS or ord(ch) < 32 for ch in value):
+        raise ValueError(f"Windows لا يقبل الاسم كما هو: {value}")
+    if value.endswith((" ", ".")):
+        raise ValueError(f"Windows لا يقبل اسمًا ينتهي بمسافة أو نقطة: {value}")
+    stem = value.split(".", 1)[0].upper()
+    if stem in WINDOWS_RESERVED_NAMES:
+        raise ValueError(f"Windows لا يقبل الاسم المحجوز: {value}")
+    return value
 
 
 def unique_path(directory: Path, name: str) -> Path:
-    target = directory / safe_filename(name)
-    if not target.exists():
-        return target
-    stem, suffix = target.stem, target.suffix
-    index = 2
-    while target.exists():
-        target = directory / f"{stem} ({index}){suffix}"
-        index += 1
-    return target
+    # Compatibility helper: preserve the exact name; conflict handling is explicit.
+    return directory / safe_filename(name)
 
 
 def format_size(size: int) -> str:
@@ -105,6 +117,8 @@ class DirectDevice:
     name: str
     ip: str
     selected: bool = True
+    id: str = ""
+    type: str = "device"
 
 
 class PersistentStore:
@@ -134,6 +148,16 @@ class PersistentStore:
     def get_device_name(self) -> str:
         return str(self.config.get("device_name") or socket.gethostname() or "كمبيوتر Windows")
 
+    def get_device_id(self) -> str:
+        with self.lock:
+            value = str(self.config.get("device_id") or "").strip()
+            if value:
+                return value
+            value = "windows-" + str(uuid.uuid4())
+            self.config["device_id"] = value
+            self._write_json(self.config_path, self.config)
+            return value
+
     def set_device_name(self, name: str) -> None:
         with self.lock:
             self.config["device_name"] = name.strip() or "كمبيوتر Windows"
@@ -143,7 +167,13 @@ class PersistentStore:
         result: List[DirectDevice] = []
         for item in self.config.get("devices", []):
             try:
-                result.append(DirectDevice(str(item["name"]), str(item["ip"]), bool(item.get("selected", True))))
+                result.append(DirectDevice(
+                    str(item["name"]),
+                    str(item["ip"]),
+                    bool(item.get("selected", True)),
+                    str(item.get("id", "")),
+                    str(item.get("type", "device")),
+                ))
             except Exception:
                 continue
         return result
@@ -160,7 +190,7 @@ class PersistentStore:
         with self.lock:
             self.transfers[transfer_id] = {
                 "id": transfer_id,
-                "filename": safe_filename(original_name or source.name),
+                "filename": str(original_name or source.name),
                 "path": str(target),
                 "size": target.stat().st_size,
                 "sender_name": sender_name,
@@ -185,7 +215,7 @@ class PersistentStore:
         with self.lock:
             self.transfers[transfer_id] = {
                 "id": transfer_id,
-                "filename": safe_filename(filename),
+                "filename": str(filename),
                 "path": str(target),
                 "size": size,
                 "sender_name": sender_name,
@@ -282,7 +312,7 @@ class HubState:
 
 
 class TransferHandler(BaseHTTPRequestHandler):
-    server_version = "SendViaLocalNet/2.0"
+    server_version = f"SendViaLocalNet/{APP_VERSION}"
 
     @property
     def state(self) -> HubState:
@@ -294,7 +324,7 @@ class TransferHandler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name, X-File-Size, X-Relative-Path, X-Entry-Type, X-Conflict-Policy, X-Transfer-Offset")
 
     def _json(self, value: Any, status: int = 200) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -322,6 +352,10 @@ class TransferHandler(BaseHTTPRequestHandler):
         self._cors()
         self.send_header("Content-Type", content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream")
         self.send_header("Content-Length", str(path.stat().st_size))
+        if not download_name:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         if download_name:
             encoded = urllib.parse.quote(download_name)
             self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{encoded}")
@@ -349,13 +383,15 @@ class TransferHandler(BaseHTTPRequestHandler):
         elif path == "/icon.svg":
             self._serve_file(web_root / "icon.svg", "image/svg+xml")
         elif path == "/upload":
-            self._text(f"SVLN|{self.state.store.get_device_name()}|windows")
+            self._text(f"SVLN|{self.state.store.get_device_name()}|windows|{self.state.store.get_device_id()}")
+        elif path == "/api/resume-status":
+            self._handle_resume_status(query)
         elif path == "/api/info":
             self._json({
                 "name": self.state.store.get_device_name(),
                 "ip": local_ip(),
                 "port": PORT,
-                "version": "2.0.0",
+                "version": APP_VERSION,
             })
         elif path == "/api/devices":
             current_id = query.get("current_id", [""])[0]
@@ -405,27 +441,132 @@ class TransferHandler(BaseHTTPRequestHandler):
         device = self.state.register(device_id, str(data.get("name") or "iPhone / Web"), str(data.get("type") or "web"))
         self._json({"ok": True, "device": device})
 
+    def _resolve_receive_target(self, filename: str, relative: str) -> Tuple[Path, str]:
+        base_dir = downloads_dir()
+        if relative:
+            raw_parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+            parts = [safe_filename(part) for part in raw_parts]
+            if len(parts) > 1:
+                base_dir = base_dir.joinpath(*parts[:-1])
+                filename = parts[-1]
+            elif len(parts) == 1:
+                filename = parts[0]
+        filename = safe_filename(filename)
+        return base_dir / filename, filename
+
+    def _handle_resume_status(self, query: Dict[str, List[str]]) -> None:
+        try:
+            filename = urllib.parse.unquote(query.get("filename", [""])[0])
+            relative = urllib.parse.unquote(query.get("relative", [""])[0])
+            total = int(query.get("size", ["0"])[0] or 0)
+            force = str(query.get("force", ["0"])[0]).lower() in ("1", "true", "yes")
+            target, _ = self._resolve_receive_target(filename, relative)
+            part = target.with_name(target.name + ".svln.part")
+
+            # Move mode must not trust a same-size pre-existing destination as proof
+            # that the bytes are identical. Force starts a fresh transfer.
+            if force and part.exists():
+                part.unlink(missing_ok=True)
+            completed = (not force) and target.exists() and (total <= 0 or target.stat().st_size == total)
+            offset = 0
+            if not completed and part.exists():
+                offset = part.stat().st_size
+                if total > 0 and offset > total:
+                    part.unlink(missing_ok=True)
+                    offset = 0
+            self._json({
+                "ok": True,
+                "offset": offset,
+                "completed": completed,
+                "filename": target.name,
+            })
+        except ValueError as exc:
+            self._json({"ok": False, "error": str(exc), "code": "INVALID_NAME"}, 422)
+        except Exception as exc:
+            self._json({"ok": False, "error": str(exc)}, 500)
+
     def _handle_direct_upload(self) -> None:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length < 0:
             self._json({"ok": False, "error": "حجم الملف غير معروف"}, 411)
             return
+
         raw_name = self.headers.get("X-File-Name", "")
         filename = urllib.parse.unquote(raw_name) if raw_name else f"received_{int(time.time())}.bin"
-        target = unique_path(downloads_dir(), filename)
-        remaining = length
+        raw_relative = self.headers.get("X-Relative-Path", "")
+        relative = urllib.parse.unquote(raw_relative) if raw_relative else ""
+        entry_type = (self.headers.get("X-Entry-Type", "file") or "file").strip().lower()
+        conflict = (self.headers.get("X-Conflict-Policy", "skip") or "skip").strip().lower()
+        if conflict not in ("skip", "overwrite", "cancel"):
+            conflict = "skip"
+
         try:
-            with target.open("wb") as output:
+            if entry_type == "directory":
+                target_dir, _ = self._resolve_receive_target(filename, relative)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                self.state.event_queue.put(("log", f"تم إنشاء المجلد {target_dir}"))
+                self._json({"ok": True, "directory": str(target_dir)})
+                return
+
+            target, filename = self._resolve_receive_target(filename, relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            total_size = int(self.headers.get("X-File-Size", str(length)) or length)
+            offset_header = self.headers.get("X-Transfer-Offset")
+            resumable = offset_header is not None
+            offset = int(offset_header or 0)
+
+            if target.exists():
+                if conflict == "skip":
+                    remaining = length
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(BUFFER_SIZE, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                    self._json({"ok": True, "skipped": True, "completed": True, "filename": target.name, "received": total_size})
+                    return
+                if conflict == "cancel":
+                    self._json({"ok": False, "error": "الملف موجود مسبقًا", "filename": target.name}, 409)
+                    return
+
+            temp = target.with_name(target.name + ".svln.part")
+            current = temp.stat().st_size if temp.exists() else 0
+
+            if resumable:
+                if offset != current:
+                    self._json({"ok": False, "error": "OFFSET_MISMATCH", "received": current}, 409)
+                    return
+                mode = "ab"
+            else:
+                offset = 0
+                mode = "wb"
+
+            remaining = length
+            with temp.open(mode) as output:
                 while remaining > 0:
                     chunk = self.rfile.read(min(BUFFER_SIZE, remaining))
                     if not chunk:
                         raise IOError("انقطع الإرسال")
                     output.write(chunk)
                     remaining -= len(chunk)
+
+            received = temp.stat().st_size
+            if total_size > 0 and received < total_size:
+                self._json({"ok": True, "partial": True, "received": received, "filename": target.name})
+                return
+            if total_size > 0 and received > total_size:
+                self._json({"ok": False, "error": "حجم الملف المستلم أكبر من المتوقع", "received": received}, 409)
+                return
+
+            if target.exists():
+                target.unlink()
+            temp.replace(target)
             self.state.event_queue.put(("received", str(target)))
-            self._json({"ok": True, "filename": target.name, "size": length})
+            self._json({"ok": True, "completed": True, "received": received, "filename": target.name, "size": received})
+        except ValueError as exc:
+            self._json({"ok": False, "error": str(exc), "code": "INVALID_NAME"}, 422)
         except Exception as exc:
-            target.unlink(missing_ok=True)
+            # Keep .svln.part for resume after Wi-Fi/app interruption.
             self._json({"ok": False, "error": str(exc)}, 500)
 
     def _handle_hub_upload(self, parsed: urllib.parse.ParseResult) -> None:
@@ -467,6 +608,8 @@ class DesktopApp:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.devices = self.store.get_devices()
         self.files: List[Path] = []
+        self.file_relative_paths: Dict[str, str] = {}
+        self.folder_entries: List[str] = []
         self.direct_selected: Set[str] = {item.ip for item in self.devices if item.selected}
         self.web_selected: Set[str] = set()
         self.qr_photo = None
@@ -509,7 +652,10 @@ class DesktopApp:
         hero.pack(fill="x", pady=(0, 14))
         left = tk.Frame(hero, bg="#4338CA")
         left.pack(side="left", fill="both", expand=True)
-        ttk.Label(left, text="نقل محلي Pro", style="Hero.TLabel").pack(anchor="w")
+        title_row = tk.Frame(left, bg="#4338CA")
+        title_row.pack(fill="x")
+        ttk.Label(title_row, text="نقل محلي Pro", style="Hero.TLabel").pack(side="left", anchor="w")
+        tk.Label(title_row, text=f"v{APP_VERSION}", bg="#4338CA", fg="#E0E7FF", font=("Segoe UI", 10, "bold")).pack(side="right")
         ttk.Label(left, text="إرسال واستقبال بين Windows وAndroid وiPhone داخل الشبكة المحلية", style="HeroSub.TLabel").pack(anchor="w", pady=(3, 10))
         self.url_var = tk.StringVar(value="جاري تشغيل الاستقبال...")
         tk.Label(left, textvariable=self.url_var, bg="#4338CA", fg="white", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -564,13 +710,14 @@ class DesktopApp:
         self.targets.pack(fill="both", expand=True)
         self.targets.bind("<Double-1>", self._toggle_target)
 
-        ttk.Label(right_panel, text="الملفات والإرسال", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(right_panel, text="اختر عدة ملفات ثم أرسلها إلى كل الأجهزة المحددة", style="Sub.TLabel").pack(anchor="w", pady=(2, 10))
+        ttk.Label(right_panel, text="الملفات والمجلدات", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(right_panel, text="أرسل ملفات أو مجلدًا كاملًا أو عدة مجلدات مع الحفاظ على البنية", style="Sub.TLabel").pack(anchor="w", pady=(2, 10))
 
         file_buttons = ttk.Frame(right_panel, style="Card.TFrame")
         file_buttons.pack(fill="x")
-        ttk.Button(file_buttons, text="اختيار الملفات", command=self._choose_files, style="Primary.TButton").pack(side="left")
-        ttk.Button(file_buttons, text="مسح القائمة", command=self._clear_files, style="Soft.TButton").pack(side="left", padx=8)
+        ttk.Button(file_buttons, text="اختيار ملفات", command=self._choose_files, style="Primary.TButton").pack(side="left")
+        ttk.Button(file_buttons, text="إضافة مجلد", command=self._choose_folder, style="Soft.TButton").pack(side="left", padx=6)
+        ttk.Button(file_buttons, text="مسح القائمة", command=self._clear_files, style="Soft.TButton").pack(side="left", padx=6)
         ttk.Button(file_buttons, text="إرسال الآن", command=self._send, style="Primary.TButton").pack(side="right")
 
         self.file_list = tk.Listbox(right_panel, height=8, font=("Segoe UI", 10), bd=0, highlightthickness=1, highlightbackground="#E4E7EC")
@@ -645,7 +792,9 @@ class DesktopApp:
             self.targets.delete(row)
         for device in self.devices:
             chosen = device.ip in self.direct_selected
-            self.targets.insert("", "end", iid=f"direct:{device.ip}", values=("☑" if chosen else "☐", device.name, "مباشر", f"{device.ip}:{PORT}"))
+            identity = device.id or device.ip
+            kind = device.type if device.type and device.type != "device" else "محفوظ"
+            self.targets.insert("", "end", iid=f"direct:{identity}", values=("☑" if chosen else "☐", device.name, kind, f"{device.ip}:{PORT}"))
         for device_id, client in current_web.items():
             chosen = device_id in self.web_selected
             self.targets.insert("", "end", iid=f"web:{device_id}", values=("☑" if chosen else "☐", client["name"], "iPhone/Web", "متصل الآن"))
@@ -655,11 +804,20 @@ class DesktopApp:
         if not item:
             return
         kind, value = item.split(":", 1)
-        target_set = self.direct_selected if kind == "direct" else self.web_selected
-        if value in target_set:
-            target_set.remove(value)
+        if kind == "direct":
+            device = next((d for d in self.devices if (d.id or d.ip) == value), None)
+            if device is None:
+                return
+            current_ip = device.ip
+            if current_ip in self.direct_selected:
+                self.direct_selected.remove(current_ip)
+            else:
+                self.direct_selected.add(current_ip)
         else:
-            target_set.add(value)
+            if value in self.web_selected:
+                self.web_selected.remove(value)
+            else:
+                self.web_selected.add(value)
         for device in self.devices:
             device.selected = device.ip in self.direct_selected
         self.store.save_devices(self.devices)
@@ -689,19 +847,68 @@ class DesktopApp:
         known = {str(item) for item in self.files}
         for value in selected:
             if value not in known:
-                self.files.append(Path(value))
+                path = Path(value)
+                self.files.append(path)
+                self.file_relative_paths.pop(str(path), None)
                 known.add(value)
+        self._render_files()
+
+    def _choose_folder(self) -> None:
+        selected = filedialog.askdirectory(title="اختر مجلدًا — يمكنك الضغط مرة أخرى لإضافة مجلد آخر")
+        if not selected:
+            return
+        root = Path(selected)
+        known = {str(item) for item in self.files}
+        known_dirs = set(self.folder_entries)
+        added = 0
+        added_dirs = 0
+
+        root_rel = root.name
+        if root_rel not in known_dirs:
+            self.folder_entries.append(root_rel)
+            known_dirs.add(root_rel)
+            added_dirs += 1
+
+        for path in root.rglob("*"):
+            try:
+                relative = Path(root.name) / path.relative_to(root)
+                relative_text = "/".join(relative.parts)
+            except Exception:
+                relative_text = f"{root.name}/{path.name}"
+
+            if path.is_dir():
+                if relative_text not in known_dirs:
+                    self.folder_entries.append(relative_text)
+                    known_dirs.add(relative_text)
+                    added_dirs += 1
+                continue
+            if not path.is_file():
+                continue
+            key = str(path)
+            if key not in known:
+                self.files.append(path)
+                known.add(key)
+                added += 1
+            self.file_relative_paths[key] = relative_text
+
+        self.status_var.set(f"تمت إضافة {root.name}: {added} ملف و{added_dirs} مجلد. يمكنك إضافة مجلد آخر.")
         self._render_files()
 
     def _clear_files(self) -> None:
         self.files.clear()
+        self.file_relative_paths.clear()
+        self.folder_entries.clear()
         self._render_files()
 
     def _render_files(self) -> None:
         self.file_list.delete(0, "end")
+        for folder in self.folder_entries:
+            self.file_list.insert("end", f"📁 {folder}")
         for path in self.files:
             try:
-                self.file_list.insert("end", f"{path.name}    ({format_size(path.stat().st_size)})")
+                relative = self.file_relative_paths.get(str(path), "")
+                label = relative if relative else path.name
+                self.file_list.insert("end", f"{label}    ({format_size(path.stat().st_size)})")
             except OSError:
                 self.file_list.insert("end", path.name)
 
@@ -724,7 +931,7 @@ class DesktopApp:
         self.executor.submit(self._scan_worker, subnet)
 
     def _scan_worker(self, subnet: str) -> None:
-        def probe(host: str) -> Optional[Tuple[str, str]]:
+        def probe(host: str) -> Optional[Tuple[str, str, str, str]]:
             try:
                 connection = http.client.HTTPConnection(host, PORT, timeout=0.65)
                 connection.request("GET", "/upload")
@@ -733,24 +940,62 @@ class DesktopApp:
                 connection.close()
                 if 200 <= response.status < 300 and body.startswith("SVLN|"):
                     parts = body.split("|")
-                    return host, parts[1] if len(parts) > 1 else f"جهاز {host}"
+                    name = parts[1] if len(parts) > 1 and parts[1] else f"جهاز {host}"
+                    kind = parts[2] if len(parts) > 2 and parts[2] else "device"
+                    device_id = parts[3].strip() if len(parts) > 3 else ""
+                    return host, name, kind, device_id
             except Exception:
                 return None
             return None
 
         hosts = [f"{subnet}.{index}" for index in range(1, 255)]
-        found: List[Tuple[str, str]] = []
+        found: List[Tuple[str, str, str, str]] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
             for result in pool.map(probe, hosts):
                 if result:
                     found.append(result)
-        for host, name in found:
-            existing = next((item for item in self.devices if item.ip == host), None)
+
+        for host, name, kind, device_id in found:
+            existing = None
+            if device_id:
+                existing = next((item for item in self.devices if item.id == device_id), None)
+            if existing is None:
+                existing = next((item for item in self.devices if item.ip == host), None)
+
             if existing:
+                old_ip = existing.ip
+                was_selected = old_ip in self.direct_selected or existing.selected
                 existing.name = name or existing.name
+                existing.type = kind or existing.type
+                if device_id:
+                    existing.id = device_id
+                existing.ip = host
+                if old_ip != host:
+                    self.direct_selected.discard(old_ip)
+                    if was_selected:
+                        self.direct_selected.add(host)
             else:
-                self.devices.append(DirectDevice(name or f"جهاز {host}", host, True))
+                existing = DirectDevice(name or f"جهاز {host}", host, True, device_id, kind)
+                self.devices.append(existing)
                 self.direct_selected.add(host)
+
+        # Remove duplicates once a stable device ID is known.
+        deduped: List[DirectDevice] = []
+        seen_ids: Set[str] = set()
+        seen_ips: Set[str] = set()
+        for item in self.devices:
+            if item.id:
+                if item.id in seen_ids:
+                    continue
+                seen_ids.add(item.id)
+            elif item.ip in seen_ips:
+                continue
+            seen_ips.add(item.ip)
+            deduped.append(item)
+        self.devices = deduped
+
+        for item in self.devices:
+            item.selected = item.ip in self.direct_selected
         self.store.save_devices(self.devices)
         self.events.put(("scan_done", len(found)))
 
@@ -764,14 +1009,18 @@ class DesktopApp:
         if not files:
             messagebox.showwarning(DISPLAY_NAME, "اختر ملفًا واحدًا على الأقل")
             return
-        total = len(files) * (len(direct) + len(web_ids))
+        entries_per_target = len(files) + len(self.folder_entries)
+        total = entries_per_target * (len(direct) + len(web_ids))
         self.progress["value"] = 0
         self.status_var.set(f"بدء {total} عملية إرسال...")
-        self.executor.submit(self._send_worker, files, direct, web_ids, total)
+        self.executor.submit(self._send_worker, files, list(self.folder_entries), direct, web_ids, total)
 
-    def _send_worker(self, files: List[Path], direct: List[DirectDevice], web_ids: List[str], total: int) -> None:
+    def _send_worker(self, files: List[Path], folders: List[str], direct: List[DirectDevice], web_ids: List[str], total: int) -> None:
         jobs = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            for folder in folders:
+                for device in direct:
+                    jobs.append(pool.submit(self._send_directory, folder, device))
             for path in files:
                 for device in direct:
                     jobs.append(pool.submit(self._send_direct, path, device))
@@ -791,15 +1040,61 @@ class DesktopApp:
                 self.events.put(("send_progress", (completed, total, ok, failed, message)))
         self.events.put(("send_done", (ok, failed)))
 
-    def _send_direct(self, path: Path, device: DirectDevice) -> Tuple[bool, str]:
+    def _send_directory(self, relative: str, device: DirectDevice) -> Tuple[bool, str]:
+        connection = http.client.HTTPConnection(device.ip, PORT, timeout=30)
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": "0",
+            "X-File-Name": urllib.parse.quote(Path(relative).name or "folder"),
+            "X-File-Size": "0",
+            "X-Relative-Path": urllib.parse.quote(relative),
+            "X-Conflict-Policy": "skip",
+            "X-Entry-Type": "directory",
+        }
+        try:
+            connection.request("POST", "/upload", body=b"", headers=headers)
+            response = connection.getresponse()
+            response.read()
+            success = 200 <= response.status < 300
+            return success, (f"تم إنشاء المجلد {relative} على {device.name}" if success else f"فشل المجلد {relative}: HTTP {response.status}")
+        except Exception as exc:
+            return False, f"فشل المجلد {relative} إلى {device.name}: {exc}"
+        finally:
+            connection.close()
+
+    def _resume_status(self, path: Path, device: DirectDevice, relative: str, size: int) -> Optional[Dict[str, Any]]:
+        query = urllib.parse.urlencode({
+            "filename": path.name,
+            "relative": relative,
+            "size": str(size),
+        })
+        connection = http.client.HTTPConnection(device.ip, PORT, timeout=8)
+        try:
+            connection.request("GET", f"/api/resume-status?{query}")
+            response = connection.getresponse()
+            body = response.read().decode("utf-8", "replace")
+            if not (200 <= response.status < 300):
+                return None
+            data = json.loads(body)
+            if not isinstance(data, dict) or not data.get("ok"):
+                return None
+            return data
+        except Exception:
+            return None
+        finally:
+            connection.close()
+
+    def _send_direct_legacy(self, path: Path, device: DirectDevice, relative: str, size: int) -> Tuple[bool, str]:
         connection = http.client.HTTPConnection(device.ip, PORT, timeout=120)
-        size = path.stat().st_size
         headers = {
             "Content-Type": "application/octet-stream",
             "Content-Length": str(size),
             "X-File-Name": urllib.parse.quote(path.name),
             "X-File-Size": str(size),
+            "X-Conflict-Policy": "skip",
         }
+        if relative:
+            headers["X-Relative-Path"] = urllib.parse.quote(relative)
         try:
             connection.putrequest("POST", "/upload")
             for key, value in headers.items():
@@ -819,6 +1114,82 @@ class DesktopApp:
             return False, f"فشل {path.name} إلى {device.name}: {exc}"
         finally:
             connection.close()
+
+    def _send_direct(self, path: Path, device: DirectDevice) -> Tuple[bool, str]:
+        size = path.stat().st_size
+        relative = self.file_relative_paths.get(str(path), "")
+        state = self._resume_status(path, device, relative, size)
+        if state is None:
+            return self._send_direct_legacy(path, device, relative, size)
+
+        if bool(state.get("completed")):
+            return True, f"{path.name} موجود كاملًا على {device.name} — تم التخطي"
+
+        chunk_size = 50 * 1024 * 1024
+        offset = max(0, min(size, int(state.get("offset", 0) or 0)))
+
+        try:
+            with path.open("rb") as source:
+                source.seek(offset)
+                while offset < size:
+                    to_send = min(chunk_size, size - offset)
+                    data = source.read(to_send)
+                    if not data:
+                        return False, f"تعذر قراءة {path.name} عند {offset}"
+
+                    sent = False
+                    for _attempt in range(3):
+                        connection = http.client.HTTPConnection(device.ip, PORT, timeout=120)
+                        headers = {
+                            "Content-Type": "application/octet-stream",
+                            "Content-Length": str(len(data)),
+                            "X-File-Name": urllib.parse.quote(path.name),
+                            "X-File-Size": str(size),
+                            "X-Transfer-Offset": str(offset),
+                            "X-Conflict-Policy": "skip",
+                        }
+                        if relative:
+                            headers["X-Relative-Path"] = urllib.parse.quote(relative)
+                        try:
+                            connection.request("POST", "/upload", body=data, headers=headers)
+                            response = connection.getresponse()
+                            response.read()
+                            if 200 <= response.status < 300:
+                                sent = True
+                                break
+                        except Exception:
+                            pass
+                        finally:
+                            connection.close()
+
+                        refreshed = self._resume_status(path, device, relative, size)
+                        if refreshed and bool(refreshed.get("completed")):
+                            return True, f"تم إرسال {path.name} إلى {device.name}"
+                        if refreshed is not None:
+                            new_offset = max(0, min(size, int(refreshed.get("offset", offset) or offset)))
+                            if new_offset != offset:
+                                offset = new_offset
+                                source.seek(offset)
+                                sent = True
+                                break
+
+                    if not sent:
+                        return False, f"فشل استكمال {path.name} إلى {device.name}"
+
+                    refreshed = self._resume_status(path, device, relative, size)
+                    if refreshed and bool(refreshed.get("completed")):
+                        return True, f"تم إرسال {path.name} إلى {device.name}"
+                    if refreshed is not None:
+                        offset = max(0, min(size, int(refreshed.get("offset", offset + len(data)) or (offset + len(data)))))
+                    else:
+                        offset += len(data)
+                    source.seek(offset)
+
+            final = self._resume_status(path, device, relative, size)
+            success = bool(final and final.get("completed"))
+            return success, (f"تم إرسال {path.name} إلى {device.name}" if success else f"تعذر إنهاء {path.name} على {device.name}")
+        except Exception as exc:
+            return False, f"فشل {path.name} إلى {device.name}: {exc}"
 
     def _queue_for_web(self, path: Path, device_id: str) -> Tuple[bool, str]:
         try:
