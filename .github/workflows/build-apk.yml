@@ -17,6 +17,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: svln-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -90,29 +94,28 @@ jobs:
           path: apk/send-via-local-net.apk
           if-no-files-found: error
 
-      - name: Publish APK to repository
+      - name: Publish versioned APK to GitHub Release
         if: github.event_name == 'push'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          BRANCH="${GITHUB_REF_NAME}"
-          cat > DOWNLOAD_APK.md <<EOF
-          # تحميل تطبيق Android
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          TAG="v${VERSION}"
+          ASSET="SendViaLocalNet-Android-v${VERSION}.apk"
+          cp apk/send-via-local-net.apk "${ASSET}"
 
-          https://github.com/aljwaal1/sentvialocalnet/raw/${BRANCH}/apk/send-via-local-net.apk
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apk/send-via-local-net.apk DOWNLOAD_APK.md
-          git commit -m "Build Android APK [skip ci]" || echo "No changes"
-
-          # Windows and Android publishers can finish at nearly the same time.
-          # Retry rebase/push so a successful build does not leave a stale APK link.
           for attempt in 1 2 3 4 5; do
-            git pull --rebase origin "${BRANCH}" || { git rebase --abort || true; sleep 2; continue; }
-            if git push origin "HEAD:${BRANCH}"; then
+            if ! gh release view "${TAG}" >/dev/null 2>&1; then
+              gh release create "${TAG}"                 --target "${GITHUB_SHA}"                 --title "SendViaLocalNet ${TAG}"                 --notes "Automated cross-platform build for ${TAG}."
+            fi
+
+            if gh release upload "${TAG}" "${ASSET}" --clobber; then
+              echo "Published ${ASSET}"
               exit 0
             fi
             sleep $((attempt * 2))
           done
-          echo "Failed to publish Android APK after retries"
+
+          echo "Failed to publish Android release asset"
           exit 1
