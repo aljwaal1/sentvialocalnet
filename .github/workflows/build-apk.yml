@@ -101,5 +101,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apk/send-via-local-net.apk DOWNLOAD_APK.md
           git commit -m "Build Android APK [skip ci]" || echo "No changes"
-          git pull --rebase origin "${BRANCH}"
-          git push origin "HEAD:${BRANCH}"
+
+          # Windows and Android publishers can finish at nearly the same time.
+          # Retry rebase/push so a successful build does not leave a stale APK link.
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin "${BRANCH}" || { git rebase --abort || true; sleep 2; continue; }
+            if git push origin "HEAD:${BRANCH}"; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo "Failed to publish Android APK after retries"
+          exit 1
