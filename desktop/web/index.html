@@ -290,17 +290,13 @@ async function postRaw(base,file){
 
     if(!advanced)throw new Error(lastError||'تعذر استكمال الملف بعد 3 محاولات');
 
-    const after=await getResumeState(base,file);
-    if(after&&after.completed)return true;
-    if(after){
-      offset=Math.max(0,Math.min(file.size,Number(after.offset||0)));
-    }else{
-      offset=end;
-    }
+    // A successful 2xx response is sent only after the receiver has persisted
+    // the whole chunk. Avoid another status GET here; it was a major source of
+    // latency for large transfers and thousands of files.
+    if(offset<end)offset=end;
   }
 
-  const finalState=await getResumeState(base,file);
-  return !finalState||!!finalState.completed;
+  return true;
 }
 
 async function sendFiles(){
