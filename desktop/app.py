@@ -459,10 +459,15 @@ class TransferHandler(BaseHTTPRequestHandler):
             filename = urllib.parse.unquote(query.get("filename", [""])[0])
             relative = urllib.parse.unquote(query.get("relative", [""])[0])
             total = int(query.get("size", ["0"])[0] or 0)
+            force = str(query.get("force", ["0"])[0]).lower() in ("1", "true", "yes")
             target, _ = self._resolve_receive_target(filename, relative)
             part = target.with_name(target.name + ".svln.part")
 
-            completed = target.exists() and (total <= 0 or target.stat().st_size == total)
+            # Move mode must not trust a same-size pre-existing destination as proof
+            # that the bytes are identical. Force starts a fresh transfer.
+            if force and part.exists():
+                part.unlink(missing_ok=True)
+            completed = (not force) and target.exists() and (total <= 0 or target.stat().st_size == total)
             offset = 0
             if not completed and part.exists():
                 offset = part.stat().st_size
