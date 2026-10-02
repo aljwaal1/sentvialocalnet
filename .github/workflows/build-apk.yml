@@ -72,6 +72,9 @@ jobs:
             echo "Signing secrets are not configured; using the runner debug key for this build."
           fi
 
+      - name: Cross-platform QA guard
+        run: python3 tools/qa_check.py
+
       - name: Build APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
