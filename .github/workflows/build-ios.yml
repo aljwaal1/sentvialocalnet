@@ -25,6 +25,9 @@ jobs:
           fi
           xcodegen --version
 
+      - name: Cross-platform QA guard
+        run: python3 tools/qa_check.py
+
       - name: Generate Xcode project
         run: xcodegen generate --spec ios/project.yml
 
