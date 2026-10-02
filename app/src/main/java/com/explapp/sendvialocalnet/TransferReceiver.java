@@ -264,7 +264,12 @@ final class TransferReceiver {
 
         File target = new File(directory, filename);
         File part = new File(directory, filename + ".svln.part");
-        boolean completed = target.exists() && (total <= 0L || target.length() == total);
+        String forceValue = queryValue(requestPath, "force");
+        boolean force = "1".equals(forceValue) || "true".equalsIgnoreCase(forceValue) || "yes".equalsIgnoreCase(forceValue);
+        // Move mode requests a fresh transfer so an unrelated same-size target can
+        // never be treated as already complete before the source is deleted.
+        if (force && part.exists()) part.delete();
+        boolean completed = !force && target.exists() && (total <= 0L || target.length() == total);
         long offset = completed ? 0L : (part.exists() ? part.length() : 0L);
         if (total > 0L && offset > total) {
             part.delete();
