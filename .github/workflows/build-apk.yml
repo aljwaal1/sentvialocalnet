@@ -10,16 +10,17 @@ on:
       - '.github/workflows/build-apk.yml'
   push:
     branches: [ main, pwa-iphone-windows-transfer ]
-    paths-ignore:
-      - 'apk/**'
-      - 'DOWNLOAD_APK.md'
+    paths:
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'VERSION'
+      - 'tools/qa_check.py'
+      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: write
 
-concurrency:
-  group: svln-release-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   build:
