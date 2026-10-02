@@ -95,28 +95,45 @@ jobs:
           path: apk/send-via-local-net.apk
           if-no-files-found: error
 
-      - name: Publish versioned APK to GitHub Release
+      - name: Publish direct APK download files
         if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           VERSION="$(tr -d '\r\n' < VERSION)"
-          TAG="v${VERSION}"
-          ASSET="SendViaLocalNet-Android-v${VERSION}.apk"
-          cp apk/send-via-local-net.apk "${ASSET}"
+          BRANCH="${GITHUB_REF_NAME}"
+          REPO="${GITHUB_REPOSITORY}"
+          SOURCE="apk/send-via-local-net.apk"
 
-          for attempt in 1 2 3 4 5; do
-            if ! gh release view "${TAG}" >/dev/null 2>&1; then
-              gh release create "${TAG}"                 --target "${GITHUB_SHA}"                 --title "SendViaLocalNet ${TAG}"                 --notes "Automated cross-platform build for ${TAG}."
+          publish_file() {
+            local TARGET="$1"
+            local MESSAGE="$2"
+            local CONTENT
+            local SHA
+
+            CONTENT="$(base64 -w 0 "${SOURCE}")"
+            SHA="$(gh api "repos/${REPO}/contents/${TARGET}?ref=${BRANCH}" --jq '.sha' 2>/dev/null || true)"
+
+            if [ -n "${SHA}" ]; then
+              gh api --method PUT "repos/${REPO}/contents/${TARGET}" \
+                -f message="${MESSAGE}" \
+                -f content="${CONTENT}" \
+                -f branch="${BRANCH}" \
+                -f sha="${SHA}" >/dev/null
+            else
+              gh api --method PUT "repos/${REPO}/contents/${TARGET}" \
+                -f message="${MESSAGE}" \
+                -f content="${CONTENT}" \
+                -f branch="${BRANCH}" >/dev/null
             fi
+          }
 
-            if gh release upload "${TAG}" "${ASSET}" --clobber; then
-              echo "Published ${ASSET}"
-              exit 0
-            fi
-            sleep $((attempt * 2))
-          done
+          # Stable alias + immutable versioned filename.
+          publish_file "apk/send-via-local-net.apk" "Publish Android APK v${VERSION} [skip ci]"
+          publish_file "apk/SendViaLocalNet-v${VERSION}.apk" "Publish versioned Android APK v${VERSION} [skip ci]"
 
-          echo "Failed to publish Android release asset"
-          exit 1
+          echo "Android direct downloads published:"
+          echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/apk/send-via-local-net.apk"
+          echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/apk/SendViaLocalNet-v${VERSION}.apk"
