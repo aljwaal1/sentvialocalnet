@@ -414,7 +414,7 @@ final class LocalTransferService: ObservableObject {
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(file.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? file.name, forHTTPHeaderField: "X-File-Name")
         request.setValue(String(file.size), forHTTPHeaderField: "X-File-Size")
-        request.setValue("skip", forHTTPHeaderField: "X-Conflict-Policy")
+        request.setValue(transferMode == "move" ? "overwrite" : "skip", forHTTPHeaderField: "X-Conflict-Policy")
         if let offset = offset {
             request.setValue(String(offset), forHTTPHeaderField: "X-Transfer-Offset")
         }
@@ -441,6 +441,9 @@ final class LocalTransferService: ObservableObject {
         ]
         if let relativePath = file.relativePath, !relativePath.isEmpty {
             queryItems.append(URLQueryItem(name: "relative", value: relativePath))
+        }
+        if transferMode == "move" {
+            queryItems.append(URLQueryItem(name: "force", value: "1"))
         }
         components.queryItems = queryItems
         guard let url = components.url else { return (false, 0, false) }
@@ -667,8 +670,13 @@ final class LocalTransferService: ObservableObject {
         }
 
         let part = destination.appendingPathExtension("svln.part")
+        let forceValue = items.first(where: { $0.name == "force" })?.value?.lowercased() ?? "0"
+        let force = forceValue == "1" || forceValue == "true" || forceValue == "yes"
+        if force, FileManager.default.fileExists(atPath: part.path) {
+            try? FileManager.default.removeItem(at: part)
+        }
         let destinationSize = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? -1
-        let completed = FileManager.default.fileExists(atPath: destination.path) && (total <= 0 || destinationSize == total)
+        let completed = !force && FileManager.default.fileExists(atPath: destination.path) && (total <= 0 || destinationSize == total)
         var offset: Int64 = 0
         if !completed, FileManager.default.fileExists(atPath: part.path) {
             offset = (try? part.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
