@@ -2,4 +2,8 @@
 
 الإصدار الحالي: **v2.1.9**
 
-https://github.com/aljwaal1/sentvialocalnet/releases/download/v2.1.9/SendViaLocalNet-Android-v2.1.9.apk
+رابط مباشر ثابت:
+https://raw.githubusercontent.com/aljwaal1/sentvialocalnet/pwa-iphone-windows-transfer/apk/send-via-local-net.apk
+
+رابط مباشر مرتبط بالنسخة:
+https://raw.githubusercontent.com/aljwaal1/sentvialocalnet/pwa-iphone-windows-transfer/apk/SendViaLocalNet-v2.1.9.apk
