@@ -114,7 +114,7 @@ public class StableMainActivity extends Activity {
         LinearLayout hero = card(Color.rgb(67, 56, 202));
         LinearLayout heroTitle = row();
         heroTitle.addView(text("نقل محلي Pro", 25, Color.WHITE, true), new LinearLayout.LayoutParams(0, -2, 1));
-        heroTitle.addView(text("v2.1.8", 12, Color.rgb(224, 231, 255), true));
+        heroTitle.addView(text("v2.1.9", 12, Color.rgb(224, 231, 255), true));
         hero.addView(heroTitle);
         hero.addView(text("لا تقلق من تغيّر IP — التطبيق يحدّثه تلقائيًا", 13, Color.rgb(224, 231, 255), false));
         receiverState = text("جاري تشغيل الاستقبال...", 13, Color.rgb(209, 250, 229), true);
@@ -360,8 +360,11 @@ public class StableMainActivity extends Activity {
             Uri tree = data.getData();
             if (tree == null) return;
             try {
-                getContentResolver().takePersistableUriPermission(tree,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                int takeFlags = data.getFlags() &
+                        (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                if ((takeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+                    getContentResolver().takePersistableUriPermission(tree, takeFlags);
+                }
             } catch (Exception ignored) {}
             String rootName = queryDisplayName(tree);
             if (rootName == null || rootName.length() == 0) rootName = "Folder";
@@ -439,8 +442,11 @@ public class StableMainActivity extends Activity {
     }
 
     private String safePathPart(String value) {
-        if (value == null || value.trim().length() == 0) return "item";
-        return value.replace("/", "_").replace("\\", "_").replace(":", "_");
+        // Preserve the exact user-visible file/folder name. Do not silently rename it.
+        // '/' cannot occur inside a single Android document component; receivers validate
+        // platform-specific invalid names and report them instead of mutating them.
+        if (value == null || value.length() == 0) return "item";
+        return value;
     }
 
     private void renderFiles() {
