@@ -8,16 +8,22 @@ on:
       - '.github/workflows/build-desktop.yml'
   push:
     branches: [ main, pwa-iphone-windows-transfer ]
-    paths-ignore:
-      - 'desktop/release/**'
-      - 'DOWNLOAD_WINDOWS.md'
+    paths:
+      - 'desktop/app.py'
+      - 'desktop/discovery_responder.py'
+      - 'desktop/launcher.py'
+      - 'desktop/windows_runtime.py'
+      - 'desktop/installer.iss'
+      - 'desktop/requirements.txt'
+      - 'desktop/stop_running_app.ps1'
+      - 'desktop/web/**'
+      - 'VERSION'
+      - 'tools/qa_check.py'
+      - '.github/workflows/build-desktop.yml'
 
 permissions:
   contents: write
 
-concurrency:
-  group: svln-release-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   build-windows:
