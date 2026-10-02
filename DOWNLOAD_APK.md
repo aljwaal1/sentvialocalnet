@@ -1,3 +1,5 @@
 # تحميل تطبيق Android
 
-https://github.com/aljwaal1/sentvialocalnet/raw/pwa-iphone-windows-transfer/apk/send-via-local-net.apk
+الإصدار الحالي: **v2.1.9**
+
+https://github.com/aljwaal1/sentvialocalnet/releases/download/v2.1.9/SendViaLocalNet-Android-v2.1.9.apk
