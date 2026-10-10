@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.13</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.14</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -202,7 +202,9 @@ function classifyFailure(message){
   if(m.includes('http 422')||m.includes('invalid_name')||m.includes('اسم'))return 'اسم أو مسار غير مقبول';
   if(m.includes('http 409')||m.includes('offset_mismatch')||m.includes('exists'))return 'تعارض ملف أو عدم تطابق الاستكمال';
   if(m.includes('http 500')||m.includes('receive failed')||m.includes('write')||m.includes('finalize'))return 'خطأ في الحفظ على الجهاز المستقبل';
-  if(m.includes('network')||m.includes('failed to fetch')||m.includes('load failed')||m.includes('الاتصال'))return 'انقطاع أو مشكلة شبكة';
+  if(m.includes('file provider'))return 'تعذر قراءة الملف من File Provider';
+  if(m.includes('network')||m.includes('failed to fetch')||m.includes('الاتصال'))return 'انقطاع أو مشكلة شبكة';
+  if(m.includes('load failed'))return 'تعذر تحميل/قراءة الملف أو انقطاع مؤقت';
   if(m.includes('notreadable')||m.includes('permission')||m.includes('denied')||m.includes('تعذر فتح')||m.includes('تعذر قراءة'))return 'تعذر قراءة الملف من المصدر';
   return 'سبب غير محدد';
 }
@@ -252,8 +254,16 @@ let activeControllers=new Set();
 const targetHealth=new Map();
 
 function isTransientConnectionError(error){
-  const reason=classifyFailure(error);
-  return reason==='انتهاء مهلة الاتصال' || reason==='انقطاع أو مشكلة شبكة';
+  const m=String(error||'').toLowerCase();
+  // "Load failed" on iPhone Safari is ambiguous: it can be a File Provider read
+  // failure, not a LAN outage. Verify target reachability before tripping the circuit.
+  return m.includes('مهلة') || m.includes('timeout') || m.includes('failed to fetch') || m.includes('network');
+}
+
+function isPermanentTransferError(error){
+  const m=String(error||'').toLowerCase();
+  return m.includes('http 422') || m.includes('invalid_name') || m.includes('invalid path') ||
+         m.includes('invalid file') || m.includes('اسم') || m.includes('مسار غير مقبول');
 }
 
 function healthState(base){
@@ -394,7 +404,9 @@ async function postRawLegacy(url,file){
       const smallTimeout=transferPhase==='recovery'?90000:25000;
       const r=await fetchWithTimeout(url,{method:'POST',headers,body:file},smallTimeout);
       if(r.ok)return true;
-      lastError='HTTP '+r.status;
+      let detail='';
+      try{detail=(await r.text()).trim()}catch(e){}
+      lastError='HTTP '+r.status+(detail?' — '+detail:'');
     }catch(e){
       lastError=e&&e.message?e.message:String(e);
     }
@@ -447,7 +459,9 @@ async function postRaw(base,file){
           advanced=true;
           break;
         }
-        lastError='HTTP '+r.status;
+        let detail='';
+        try{detail=(await r.text()).trim()}catch(e){}
+        lastError='HTTP '+r.status+(detail?' — '+detail:'');
       }catch(e){
         lastError=e&&e.message?e.message:String(e);
       }
@@ -550,8 +564,33 @@ async function sendFiles(){
         ok++;
       }catch(e){
         const error=e&&e.message?e.message:String(e);
-        markTargetFailure(task.healthBase||'',error);
-        retryQueue.push({task,error});
+
+        if(isPermanentTransferError(error)){
+          fail++;
+          failed.push(task.name+' — '+error);
+          lastFailureReport.push({
+            time:new Date().toLocaleString(),
+            name:task.name,
+            path:task.path||task.name,
+            size:task.size||0,
+            target:task.target||'غير معروف',
+            reason:classifyFailure(error),
+            error
+          });
+        }else{
+          let targetActuallyDown=false;
+          if(isTransientConnectionError(error)){
+            targetActuallyDown=!(await probeTarget(task.healthBase||''));
+            if(targetActuallyDown)markTargetFailure(task.healthBase||'',error);
+            else markTargetSuccess(task.healthBase||'');
+          }
+          retryQueue.push({
+            task,
+            error:(/load failed/i.test(error)&&!targetActuallyDown)
+              ? error+' — الجهاز المستقبل متصل؛ الاحتمال الأكبر تعذر قراءة الملف من File Provider'
+              : error
+          });
+        }
       }
       done++;
       lastTransferReport=makeTransferReport({total,done,ok,fail,retryQueue,phase:transferPhase,cancelled:false});
@@ -561,7 +600,7 @@ async function sendFiles(){
       const circuitOpen=[...targetHealth.values()].some(s=>s.open);
       $('status').textContent=circuitOpen
         ? '⏸️ تم اكتشاف مشكلة اتصال متكررة. سيتم اختبار الاتصال قبل إرسال ملفات جديدة.'
-        : 'وضع Turbo ⚡\nتمت معالجة '+done+' من '+total+'\nنجح: '+ok+' | متعثر مؤقتًا: '+retryQueue.length+
+        : 'وضع Turbo ⚡\nتمت معالجة '+done+' من '+total+'\nنجح: '+ok+' | متعثر مؤقتًا: '+retryQueue.length+' | فشل نهائي: '+fail+
           (retryQueue.length?'\nسيُعاد إرسال المتعثر تلقائيًا بعد المرور الأول.':'');
     }
   }
