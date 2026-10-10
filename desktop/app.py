@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import http.client
 import json
 import mimetypes
@@ -115,6 +116,22 @@ def safe_filename(name: str) -> str:
     stem = repaired.split(".", 1)[0].upper()
     if stem in WINDOWS_RESERVED_NAMES:
         repaired = "_" + repaired
+
+    # Keep each Windows path component comfortably below filesystem limits.
+    # Only overlong/problematic names are changed. Preserve the extension and add
+    # a deterministic short hash so two long names do not collapse to one file.
+    max_component = 180
+    if len(repaired) > max_component:
+        digest = hashlib.sha1(value.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+        suffix = "~" + digest
+        dot = repaired.rfind(".")
+        if 0 < dot and len(repaired) - dot <= 20:
+            ext = repaired[dot:]
+            keep = max_component - len(suffix) - len(ext)
+            repaired = repaired[:max(1, keep)] + suffix + ext
+        else:
+            keep = max_component - len(suffix)
+            repaired = repaired[:max(1, keep)] + suffix
 
     return repaired
 
