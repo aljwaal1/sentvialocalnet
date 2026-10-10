@@ -7,7 +7,7 @@ from typing import Callable, Optional
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = 5053
-APP_VERSION = "2.1.13"
+APP_VERSION = "2.1.14"
 
 
 class RuntimeControl:
