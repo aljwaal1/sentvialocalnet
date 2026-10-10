@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.10</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.11</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -138,6 +138,7 @@ function downloadFailureReport(){
 
 let transferRunning=false;
 let transferCancelled=false;
+let transferPhase='idle'; // idle | primary | recovery
 let activeControllers=new Set();
 
 function setSendingUi(active){
@@ -213,10 +214,12 @@ async function postRawLegacy(url,file){
   const rp=relPath(file);
   if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
   let lastError='';
-  for(let attempt=1;attempt<=3;attempt++){
+  const maxAttempts=transferPhase==='recovery'?3:1;
+  for(let attempt=1;attempt<=maxAttempts;attempt++){
     if(transferCancelled)throw new Error('تم إيقاف النقل');
     try{
-      const r=await fetchWithTimeout(url,{method:'POST',headers,body:file},120000);
+      const smallTimeout=transferPhase==='recovery'?90000:25000;
+      const r=await fetchWithTimeout(url,{method:'POST',headers,body:file},smallTimeout);
       if(r.ok)return true;
       lastError='HTTP '+r.status;
     }catch(e){
@@ -224,7 +227,7 @@ async function postRawLegacy(url,file){
     }
     await new Promise(resolve=>setTimeout(resolve,500*attempt));
   }
-  throw new Error(lastError||'تعذر الإرسال بعد 3 محاولات');
+  throw new Error(lastError||(transferPhase==='recovery'?'تعذر الإرسال بعد محاولات الاستعادة':'تعثر الإرسال في المرور الأول'));
 }
 
 async function postRaw(base,file){
@@ -252,7 +255,8 @@ async function postRaw(base,file){
     let advanced=false;
     let lastError='';
 
-    for(let attempt=1;attempt<=3&&!advanced;attempt++){
+    const maxChunkAttempts=transferPhase==='recovery'?3:1;
+    for(let attempt=1;attempt<=maxChunkAttempts&&!advanced;attempt++){
       if(transferCancelled)throw new Error('تم إيقاف النقل');
       const headers={
         'Content-Type':'application/octet-stream',
@@ -264,7 +268,8 @@ async function postRaw(base,file){
       if(rp&&rp!==file.name)headers['X-Relative-Path']=encodeURIComponent(rp);
 
       try{
-        const r=await fetchWithTimeout(base+'/upload',{method:'POST',headers,body},180000);
+        const chunkTimeout=transferPhase==='recovery'?180000:90000;
+        const r=await fetchWithTimeout(base+'/upload',{method:'POST',headers,body},chunkTimeout);
         if(r.ok){
           advanced=true;
           break;
@@ -308,6 +313,7 @@ async function sendFiles(){
   if(!files.length){toast('اختر ملفًا واحدًا على الأقل');return}
   transferRunning=true;
   transferCancelled=false;
+  transferPhase='primary';
   lastFailureReport=[];
   renderFailureReport([]);
   setSendingUi(true);
@@ -329,7 +335,8 @@ async function sendFiles(){
         const sender=encodeURIComponent(localStorage.getItem(NAME_KEY)||'جهاز ويب');
         const url='/api/hub-upload?recipients='+encodeURIComponent(hub.join(','))+'&filename='+encodeURIComponent(file.name)+'&sender_name='+sender;
         let lastError='';
-        for(let attempt=1;attempt<=3;attempt++){
+        const maxHubAttempts=transferPhase==='recovery'?3:1;
+        for(let attempt=1;attempt<=maxHubAttempts;attempt++){
           try{
             const rr=await fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file},120000);
             if(rr.ok)return true;
@@ -378,6 +385,7 @@ async function sendFiles(){
     // Retry queued items one-by-one to reduce network/socket pressure and only then
     // count them as final failures.
     if(!transferCancelled && retryQueue.length){
+      transferPhase='recovery';
       const recovery=[...retryQueue];
       for(let i=0;i<recovery.length;i++){
         if(transferCancelled)break;
@@ -420,6 +428,7 @@ async function sendFiles(){
     activeControllers.clear();
     await releaseScreenAwake();
     transferRunning=false;
+    transferPhase='idle';
     setSendingUi(false);
   }
 
