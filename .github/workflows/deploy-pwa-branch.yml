@@ -1,0 +1,39 @@
+name: Validate PWA branch
+
+on:
+  push:
+    branches:
+      - pwa-iphone-windows-transfer
+    paths:
+      - 'pwa/**'
+      - 'desktop/web/**'
+      - 'VERSION'
+      - 'tools/qa_check.py'
+      - '.github/workflows/deploy-pwa-branch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cross-platform QA guard
+        run: python3 tools/qa_check.py
+
+      - name: Validate PWA files
+        run: |
+          test -f pwa/index.html
+          test -f pwa/manifest.webmanifest
+          test -f pwa/sw.js
+          test -f desktop/web/index.html
+
+      - name: Upload PWA bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SendViaLocalNet-PWA
+          path: pwa
+          if-no-files-found: error

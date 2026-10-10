@@ -3,7 +3,7 @@ import Network
 import UIKit
 import Darwin
 
-struct LocalDevice: Identifiable, Hashable {
+struct LocalDevice: Identifiable, Hashable, Codable {
     let id: String
     var name: String
     var type: String
@@ -18,6 +18,17 @@ struct PendingFile: Identifiable, Hashable {
     let url: URL
     let name: String
     let size: Int64
+    let relativePath: String?
+    let isDirectory: Bool
+    let rootFolderId: String?
+}
+
+struct SelectedFolder: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let url: URL
+    var selected: Bool
+    let itemCount: Int
 }
 
 struct ReceivedFile: Identifiable, Hashable {
@@ -31,12 +42,14 @@ struct ReceivedFile: Identifiable, Hashable {
 final class LocalTransferService: ObservableObject {
     @Published var devices: [LocalDevice] = []
     @Published var pendingFiles: [PendingFile] = []
+    @Published var selectedFolders: [SelectedFolder] = []
     @Published var receivedFiles: [ReceivedFile] = []
     @Published var status = "جاهز"
     @Published var localIP = "0.0.0.0"
     @Published var receiverRunning = false
     @Published var sending = false
     @Published var progress: Double = 0
+    @Published var transferMode: String = "copy"
 
     private let transferPort: UInt16 = 5051
     private let discoveryPort: UInt16 = 5052
@@ -46,6 +59,37 @@ final class LocalTransferService: ObservableObject {
     private var discoveryFD: Int32 = -1
     private var discoveryRunning = false
     private var started = false
+    private var activeSecurityScopes: [String: URL] = [:]
+    private var activeFileScopes: [UUID: URL] = [:]
+
+    private let knownDevicesKey = "svln.known.devices"
+
+    private lazy var transferSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.httpMaximumConnectionsPerHost = 6
+        config.timeoutIntervalForRequest = 180
+        config.timeoutIntervalForResource = 60 * 60 * 6
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
+    }()
+
+    init() {
+        loadKnownDevices()
+    }
+
+    private func loadKnownDevices() {
+        guard let data = UserDefaults.standard.data(forKey: knownDevicesKey),
+              let saved = try? JSONDecoder().decode([LocalDevice].self, from: data) else { return }
+        devices = saved.map {
+            LocalDevice(id: $0.id, name: $0.name, type: $0.type, ip: $0.ip, port: $0.port, selected: $0.selected, lastSeen: $0.lastSeen)
+        }
+    }
+
+    private func saveKnownDevices() {
+        guard let data = try? JSONEncoder().encode(devices) else { return }
+        UserDefaults.standard.set(data, forKey: knownDevicesKey)
+    }
 
     private lazy var deviceId: String = {
         if let saved = UserDefaults.standard.string(forKey: "svln.device.id"), !saved.isEmpty { return saved }
@@ -72,11 +116,19 @@ final class LocalTransferService: ObservableObject {
         listener?.cancel()
         discoveryRunning = false
         if discoveryFD >= 0 { Darwin.close(discoveryFD) }
+        for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeSecurityScopes.removeAll()
+        for url in activeFileScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeFileScopes.removeAll()
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
     }
 
     func toggleDevice(_ id: String) {
         guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
         devices[index].selected.toggle()
+        saveKnownDevices()
     }
 
     func clearPendingFiles() {
@@ -84,27 +136,130 @@ final class LocalTransferService: ObservableObject {
             try? FileManager.default.removeItem(at: item.url)
         }
         pendingFiles.removeAll()
+        selectedFolders.removeAll()
+        for url in activeSecurityScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeSecurityScopes.removeAll()
+        for url in activeFileScopes.values { url.stopAccessingSecurityScopedResource() }
+        activeFileScopes.removeAll()
         progress = 0
     }
 
     func prepareFiles(_ urls: [URL]) {
         clearPendingFiles()
-        var prepared: [PendingFile] = []
+        addPickedItems(urls)
+    }
+
+    func addPickedItems(_ urls: [URL]) {
+        var addedFiles = 0
+        var addedFolders = 0
+
         for source in urls {
-            let scoped = source.startAccessingSecurityScopedResource()
-            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
             do {
-                let name = Self.safeFileName(source.lastPathComponent)
-                let target = Self.uniqueURL(in: FileManager.default.temporaryDirectory, name: name)
-                try FileManager.default.copyItem(at: source, to: target)
-                let values = try target.resourceValues(forKeys: [.fileSizeKey])
-                prepared.append(PendingFile(url: target, name: name, size: Int64(values.fileSize ?? 0)))
+                let values = try source.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey])
+                if values.isDirectory == true {
+                    addFolder(source)
+                    addedFolders += 1
+                    continue
+                }
+
+                guard values.isRegularFile == true else { continue }
+                if pendingFiles.contains(where: { $0.rootFolderId == nil && $0.url == source }) { continue }
+
+                let scoped = source.startAccessingSecurityScopedResource()
+                let item = PendingFile(
+                    url: source,
+                    name: source.lastPathComponent,
+                    size: Int64(values.fileSize ?? 0),
+                    relativePath: nil,
+                    isDirectory: false,
+                    rootFolderId: nil
+                )
+                pendingFiles.append(item)
+                if scoped { activeFileScopes[item.id] = source }
+                addedFiles += 1
             } catch {
-                status = "تعذر تجهيز ملف: \(source.lastPathComponent)"
+                status = "تعذر قراءة: \(source.lastPathComponent)"
             }
         }
-        pendingFiles = prepared
-        if !prepared.isEmpty { status = "تم اختيار \(prepared.count) ملف" }
+
+        if addedFiles > 0 || addedFolders > 0 {
+            status = "تمت إضافة \(addedFiles) ملف و\(addedFolders) مجلد"
+        }
+    }
+
+    func addFolder(_ folderURL: URL) {
+        let scoped = folderURL.startAccessingSecurityScopedResource()
+
+        let rootName = folderURL.lastPathComponent
+        if selectedFolders.contains(where: { $0.name.caseInsensitiveCompare(rootName) == .orderedSame && $0.url == folderURL }) {
+            if scoped { folderURL.stopAccessingSecurityScopedResource() }
+            status = "هذا المجلد مضاف بالفعل: \(rootName)"
+            return
+        }
+
+        let rootId = UUID().uuidString.lowercased()
+        if scoped { activeSecurityScopes[rootId] = folderURL }
+        var newItems: [PendingFile] = []
+        newItems.append(PendingFile(url: folderURL, name: rootName, size: 0, relativePath: rootName, isDirectory: true, rootFolderId: rootId))
+
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else {
+            if let url = activeSecurityScopes.removeValue(forKey: rootId) { url.stopAccessingSecurityScopedResource() }
+            status = "تعذر قراءة المجلد: \(folderURL.lastPathComponent)"
+            return
+        }
+
+        for case let source as URL in enumerator {
+            do {
+                let values = try source.resourceValues(forKeys: keys)
+                let rel = source.path.replacingOccurrences(of: folderURL.path + "/", with: "")
+                let relativePath = rootName + "/" + rel.split(separator: "/").map(String.init).joined(separator: "/")
+                let name = source.lastPathComponent
+
+                if values.isDirectory == true {
+                    newItems.append(PendingFile(url: source, name: name, size: 0, relativePath: relativePath, isDirectory: true, rootFolderId: rootId))
+                    continue
+                }
+
+                guard values.isRegularFile == true else { continue }
+                // Keep the original URL under the root folder's security scope.
+                // This avoids duplicating a large Downloads folder into app temporary storage.
+                newItems.append(PendingFile(url: source, name: name, size: Int64(values.fileSize ?? 0), relativePath: relativePath, isDirectory: false, rootFolderId: rootId))
+            } catch {
+                status = "تعذر تجهيز عنصر: \(source.lastPathComponent)"
+            }
+        }
+
+        pendingFiles.append(contentsOf: newItems)
+        selectedFolders.append(SelectedFolder(id: rootId, name: rootName, url: folderURL, selected: true, itemCount: newItems.count))
+        status = "تمت إضافة \(rootName) • \(newItems.count) عنصر"
+    }
+
+    func toggleFolder(_ id: String) {
+        guard let index = selectedFolders.firstIndex(where: { $0.id == id }) else { return }
+        selectedFolders[index].selected.toggle()
+    }
+
+    func removeFolder(_ id: String) {
+        let removedItems = pendingFiles.filter { $0.rootFolderId == id }
+        for item in removedItems where item.url.path.hasPrefix(FileManager.default.temporaryDirectory.path) {
+            try? FileManager.default.removeItem(at: item.url)
+        }
+        pendingFiles.removeAll { $0.rootFolderId == id }
+        selectedFolders.removeAll { $0.id == id }
+        if let url = activeSecurityScopes.removeValue(forKey: id) { url.stopAccessingSecurityScopedResource() }
+        status = "تم حذف المجلد من قائمة الإرسال"
+    }
+
+    func prepareFolders(_ folderURLs: [URL]) {
+        clearPendingFiles()
+        for folderURL in folderURLs {
+            addFolder(folderURL)
+        }
     }
 
     func discover() {
@@ -140,46 +295,281 @@ final class LocalTransferService: ObservableObject {
         guard !targets.isEmpty else { status = "حدد جهازًا واحدًا على الأقل"; return }
         guard !pendingFiles.isEmpty else { status = "اختر ملفًا واحدًا على الأقل"; return }
         guard !sending else { return }
+
+        let enabledFolderIds = Set(selectedFolders.filter { $0.selected }.map(\.id))
+        let files = pendingFiles.filter { item in
+            guard let rootId = item.rootFolderId else { return true }
+            return enabledFolderIds.contains(rootId)
+        }
+        guard !files.isEmpty else {
+            status = "حدد مجلدًا واحدًا على الأقل أو اختر ملفات"
+            return
+        }
+
         sending = true
         progress = 0
-        let files = pendingFiles
+        UIApplication.shared.isIdleTimerDisabled = true
+
         Task { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                await MainActor.run { UIApplication.shared.isIdleTimerDisabled = false }
+                return
+            }
+
+            let jobs: [(PendingFile, LocalDevice)] = targets.flatMap { device in
+                files.map { file in (file, device) }
+            }
+            let total = max(1, jobs.count)
+            let turboWorkers = min(4, total)
             var completed = 0
             var succeeded = 0
-            let total = max(1, targets.count * files.count)
-            for device in targets {
-                for file in files {
-                    await MainActor.run { self.status = "إرسال \(file.name) إلى \(device.name)…" }
-                    if await self.send(file: file, to: device) { succeeded += 1 }
+            var itemSucceeded: [UUID: Bool] = Dictionary(uniqueKeysWithValues: files.map { ($0.id, true) })
+            var nextJob = 0
+
+            await MainActor.run {
+                self.status = "Turbo يعمل ⚡ • حتى \(turboWorkers) عمليات نقل بالتوازي"
+            }
+
+            await withTaskGroup(of: (UUID, Bool).self) { group in
+                func enqueueNext() {
+                    guard nextJob < jobs.count else { return }
+                    let (file, device) = jobs[nextJob]
+                    nextJob += 1
+                    group.addTask { [weak self] in
+                        guard let self = self else { return (file.id, false) }
+                        let ok = await self.send(file: file, to: device)
+                        return (file.id, ok)
+                    }
+                }
+
+                for _ in 0..<turboWorkers { enqueueNext() }
+
+                while let result = await group.next() {
                     completed += 1
-                    await MainActor.run { self.progress = Double(completed) / Double(total) }
+                    if result.1 {
+                        succeeded += 1
+                    } else {
+                        itemSucceeded[result.0] = false
+                    }
+                    await MainActor.run {
+                        self.progress = Double(completed) / Double(total)
+                        self.status = "Turbo ⚡ • اكتمل \(completed)/\(total) • نجح \(succeeded) • فشل \(completed - succeeded)"
+                    }
+                    enqueueNext()
                 }
             }
+
+            var deletedCount = 0
+            var deleteFailed = 0
+            if self.transferMode == "move" {
+                for file in files where file.rootFolderId == nil && !file.isDirectory {
+                    guard itemSucceeded[file.id] == true else { continue }
+                    do {
+                        try FileManager.default.removeItem(at: file.url)
+                        deletedCount += 1
+                    } catch {
+                        deleteFailed += 1
+                    }
+                }
+
+                for folder in self.selectedFolders where folder.selected {
+                    let folderItems = files.filter { $0.rootFolderId == folder.id }
+                    guard !folderItems.isEmpty, folderItems.allSatisfy({ itemSucceeded[$0.id] == true }) else { continue }
+                    do {
+                        try FileManager.default.removeItem(at: folder.url)
+                        deletedCount += 1
+                    } catch {
+                        deleteFailed += 1
+                    }
+                }
+            }
+
             await MainActor.run {
                 self.sending = false
-                self.status = "انتهى الإرسال: نجح \(succeeded) من \(total)"
+                UIApplication.shared.isIdleTimerDisabled = false
+                if self.transferMode == "move" {
+                    self.status = "انتهى النقل: نجح \(succeeded) من \(total) • حُذف الأصل: \(deletedCount)" +
+                        (deleteFailed > 0 ? " • تعذر حذف: \(deleteFailed)" : "")
+                    if deletedCount > 0 {
+                        self.clearPendingFiles()
+                    }
+                } else {
+                    self.status = "انتهى النسخ: نجح \(succeeded) من \(total)"
+                }
             }
         }
     }
 
-    private func send(file: PendingFile, to device: LocalDevice) async -> Bool {
-        guard let url = URL(string: "http://\(device.ip):\(device.port)/upload") else { return false }
+    private struct ResumeStatus: Decodable {
+        let ok: Bool?
+        let offset: Int64?
+        let completed: Bool?
+    }
+
+    private func makeUploadRequest(file: PendingFile, to device: LocalDevice, offset: Int64? = nil) -> URLRequest? {
+        guard let url = URL(string: "http://\(device.ip):\(device.port)/upload") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 180
+        request.timeoutInterval = 120
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(file.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? file.name, forHTTPHeaderField: "X-File-Name")
         request.setValue(String(file.size), forHTTPHeaderField: "X-File-Size")
+        request.setValue(transferMode == "move" ? "overwrite" : "skip", forHTTPHeaderField: "X-Conflict-Policy")
+        if let offset = offset {
+            request.setValue(String(offset), forHTTPHeaderField: "X-Transfer-Offset")
+        }
+        if file.isDirectory {
+            request.setValue("directory", forHTTPHeaderField: "X-Entry-Type")
+        }
+        if let relativePath = file.relativePath, !relativePath.isEmpty {
+            request.setValue(relativePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? relativePath, forHTTPHeaderField: "X-Relative-Path")
+        }
         request.setValue(deviceId, forHTTPHeaderField: "X-SVLN-Sender-ID")
         request.setValue(deviceName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? deviceName, forHTTPHeaderField: "X-SVLN-Sender-Name")
+        return request
+    }
+
+    private func resumeStatus(for file: PendingFile, on device: LocalDevice) async -> (supported: Bool, offset: Int64, completed: Bool) {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = device.ip
+        components.port = device.port
+        components.path = "/api/resume-status"
+        var queryItems = [
+            URLQueryItem(name: "filename", value: file.name),
+            URLQueryItem(name: "size", value: String(file.size))
+        ]
+        if let relativePath = file.relativePath, !relativePath.isEmpty {
+            queryItems.append(URLQueryItem(name: "relative", value: relativePath))
+        }
+        if transferMode == "move" {
+            queryItems.append(URLQueryItem(name: "force", value: "1"))
+        }
+        components.queryItems = queryItems
+        guard let url = components.url else { return (false, 0, false) }
+
         do {
-            let (_, response) = try await URLSession.shared.upload(for: request, fromFile: file.url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            let (data, response) = try await transferSession.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300,
+                  let value = try? JSONDecoder().decode(ResumeStatus.self, from: data) else {
+                return (false, 0, false)
+            }
+            let offset = max(0, min(file.size, value.offset ?? 0))
+            return (true, offset, value.completed ?? false)
+        } catch {
+            return (false, 0, false)
+        }
+    }
+
+    private func sendResumable(file: PendingFile, to device: LocalDevice) async -> Bool {
+        var state = await resumeStatus(for: file, on: device)
+        guard state.supported else { return await sendLegacy(file: file, to: device) }
+        if state.completed { return true }
+
+        guard let handle = try? FileHandle(forReadingFrom: file.url) else { return false }
+        defer { try? handle.close() }
+
+        // 32 MiB keeps memory bounded even with four simultaneous iPhone transfers.
+        let chunkSize = 32 * 1024 * 1024
+        var offset = state.offset
+        do { try handle.seek(toOffset: UInt64(offset)) }
+        catch { return false }
+
+        // Receiver may already have all bytes in .svln.part but still need finalization.
+        if offset >= file.size {
+            guard var request = makeUploadRequest(file: file, to: device, offset: offset) else { return false }
+            request.httpBody = Data()
+            do {
+                let (_, response) = try await transferSession.data(for: request)
+                return ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300
+            } catch {
+                return false
+            }
+        }
+
+        while offset < file.size {
+            let chunkStart = offset
+            let wanted = Int(min(Int64(chunkSize), file.size - chunkStart))
+            let data: Data
+            do {
+                data = try handle.read(upToCount: wanted) ?? Data()
+            } catch {
+                return false
+            }
+            if data.isEmpty { return false }
+
+            var sent = false
+            for _ in 0..<3 {
+                guard var request = makeUploadRequest(file: file, to: device, offset: chunkStart) else { return false }
+                request.httpBody = data
+                do {
+                    let (_, response) = try await transferSession.data(for: request)
+                    if let http = response as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
+                        // 2xx is returned only after the receiver persisted this chunk.
+                        offset = chunkStart + Int64(data.count)
+                        sent = true
+                        break
+                    }
+                } catch {
+                    // Query persisted receiver state only on failure/recovery.
+                }
+
+                state = await resumeStatus(for: file, on: device)
+                if state.completed { return true }
+                if state.supported {
+                    offset = state.offset
+                    do { try handle.seek(toOffset: UInt64(offset)) } catch { return false }
+                    if offset != chunkStart {
+                        sent = true
+                        break
+                    }
+                }
+            }
+
+            if !sent { return false }
+
+            // A recovery may have moved us to the middle of the chunk.
+            if offset != chunkStart + Int64(data.count) {
+                do { try handle.seek(toOffset: UInt64(offset)) } catch { return false }
+            }
+
+            if offset >= file.size { return true }
+        }
+
+        return true
+    }
+
+    private func sendLegacy(file: PendingFile, to device: LocalDevice) async -> Bool {
+        guard var request = makeUploadRequest(file: file, to: device) else { return false }
+        do {
+            let response: URLResponse
+            if file.isDirectory {
+                request.httpBody = Data()
+                let (_, result) = try await transferSession.data(for: request)
+                response = result
+            } else {
+                let (_, result) = try await transferSession.upload(for: request, fromFile: file.url)
+                response = result
+            }
             return ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300
         } catch {
             await MainActor.run { self.status = "فشل إرسال \(file.name): \(error.localizedDescription)" }
             return false
         }
+    }
+
+    private func send(file: PendingFile, to device: LocalDevice) async -> Bool {
+        if file.isDirectory {
+            return await sendLegacy(file: file, to: device)
+        }
+
+        let ok = await sendResumable(file: file, to: device)
+        if !ok {
+            await MainActor.run { self.status = "تعذر استكمال \(file.name)" }
+        }
+        return ok
     }
 
     private func startReceiver() {
@@ -237,6 +627,68 @@ final class LocalTransferService: ObservableObject {
         readHeader()
     }
 
+    private func resolvedReceiveDestination(name: String, relative: String?) -> URL? {
+        var folder = Self.receiveFolder()
+        var finalName = name
+
+        if let relative = relative, !relative.isEmpty {
+            let decoded = relative.removingPercentEncoding ?? relative
+            let rawParts = decoded.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map(String.init)
+            var parts: [String] = []
+            for raw in rawParts {
+                guard let value = Self.exactComponent(raw) else { return nil }
+                parts.append(value)
+            }
+            if parts.count > 1 {
+                for component in parts.dropLast() {
+                    folder.appendPathComponent(component, isDirectory: true)
+                }
+                finalName = parts.last ?? name
+            } else if parts.count == 1 {
+                finalName = parts[0]
+            }
+        }
+
+        guard let exactName = Self.exactComponent(finalName) else { return nil }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(exactName, isDirectory: false)
+    }
+
+    private func handleResumeStatus(path: String, connection: NWConnection) {
+        guard let components = URLComponents(string: "http://localhost\(path)") else {
+            sendHTTP(connection, code: 400, body: "{\"ok\":false}", contentType: "application/json")
+            return
+        }
+        let items = components.queryItems ?? []
+        let filename = items.first(where: { $0.name == "filename" })?.value ?? ""
+        let relative = items.first(where: { $0.name == "relative" })?.value
+        let total = Int64(items.first(where: { $0.name == "size" })?.value ?? "0") ?? 0
+
+        guard let destination = resolvedReceiveDestination(name: filename, relative: relative) else {
+            sendHTTP(connection, code: 422, body: "{\"ok\":false,\"error\":\"INVALID_NAME\"}", contentType: "application/json")
+            return
+        }
+
+        let part = destination.appendingPathExtension("svln.part")
+        let forceValue = items.first(where: { $0.name == "force" })?.value?.lowercased() ?? "0"
+        let force = forceValue == "1" || forceValue == "true" || forceValue == "yes"
+        if force, FileManager.default.fileExists(atPath: part.path) {
+            try? FileManager.default.removeItem(at: part)
+        }
+        let destinationSize = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? -1
+        let completed = !force && FileManager.default.fileExists(atPath: destination.path) && (total <= 0 || destinationSize == total)
+        var offset: Int64 = 0
+        if !completed, FileManager.default.fileExists(atPath: part.path) {
+            offset = (try? part.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            if total > 0 && offset > total {
+                try? FileManager.default.removeItem(at: part)
+                offset = 0
+            }
+        }
+        let body = "{\"ok\":true,\"offset\":\(offset),\"completed\":\(completed ? "true" : "false"),\"filename\":\"\(Self.jsonEscape(destination.lastPathComponent))\"}"
+        sendHTTP(connection, code: 200, body: body, contentType: "application/json")
+    }
+
     private func processRequest(_ headerText: String, initialBody: Data, connection: NWConnection) {
         let lines = headerText.components(separatedBy: "\r\n")
         guard let first = lines.first else { sendHTTP(connection, code: 400, body: "Bad request"); return }
@@ -244,6 +696,7 @@ final class LocalTransferService: ObservableObject {
         guard firstParts.count >= 2 else { sendHTTP(connection, code: 400, body: "Bad request"); return }
         let method = String(firstParts[0]).uppercased()
         let path = String(firstParts[1])
+
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
@@ -251,8 +704,14 @@ final class LocalTransferService: ObservableObject {
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             headers[key] = value
         }
+
         if method == "OPTIONS" { sendHTTP(connection, code: 204, body: ""); return }
+        if method == "GET" && path.hasPrefix("/api/resume-status") {
+            handleResumeStatus(path: path, connection: connection)
+            return
+        }
         guard path.hasPrefix("/upload") else { sendHTTP(connection, code: 404, body: "Not found"); return }
+
         if method == "GET" {
             let body = "{\"ok\":true,\"name\":\"\(Self.jsonEscape(deviceName))\",\"type\":\"ios\",\"port\":5051}"
             sendHTTP(connection, code: 200, body: body, contentType: "application/json")
@@ -262,21 +721,84 @@ final class LocalTransferService: ObservableObject {
 
         let encodedName = headers["x-file-name"] ?? "received-file"
         let decodedName = encodedName.removingPercentEncoding ?? encodedName
-        let name = Self.safeFileName(decodedName)
-        let expected = Int64(headers["x-file-size"] ?? headers["content-length"] ?? "") ?? -1
-        let folder = Self.receiveFolder()
-        let destination = Self.uniqueURL(in: folder, name: name)
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: destination) else { sendHTTP(connection, code: 500, body: "Cannot create file"); return }
+        guard let name = Self.exactComponent(decodedName) else {
+            sendHTTP(connection, code: 422, body: "Invalid file name")
+            return
+        }
+
+        let relativeHeader = headers["x-relative-path"]
+        if (headers["x-entry-type"] ?? "").lowercased() == "directory" {
+            var folder = Self.receiveFolder()
+            if let relativeHeader = relativeHeader, !relativeHeader.isEmpty {
+                let decodedRelative = relativeHeader.removingPercentEncoding ?? relativeHeader
+                let rawParts = decodedRelative.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map(String.init)
+                for raw in rawParts {
+                    guard let component = Self.exactComponent(raw) else {
+                        sendHTTP(connection, code: 422, body: "Invalid directory name")
+                        return
+                    }
+                    folder.appendPathComponent(component, isDirectory: true)
+                }
+            } else {
+                folder.appendPathComponent(name, isDirectory: true)
+            }
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                DispatchQueue.main.async { self.status = "تم استلام المجلد \(folder.lastPathComponent)" }
+                sendHTTP(connection, code: 200, body: "OK")
+            } catch {
+                sendHTTP(connection, code: 500, body: "Cannot create directory")
+            }
+            return
+        }
+
+        guard let destination = resolvedReceiveDestination(name: name, relative: relativeHeader) else {
+            sendHTTP(connection, code: 422, body: "Invalid path")
+            return
+        }
+
+        let requestLength = Int64(headers["content-length"] ?? "") ?? Int64(initialBody.count)
+        let totalSize = Int64(headers["x-file-size"] ?? "") ?? requestLength
+        let conflict = (headers["x-conflict-policy"] ?? "skip").lowercased()
+        let offsetHeader = headers["x-transfer-offset"]
+        let resumable = offsetHeader != nil
+        let offset = Int64(offsetHeader ?? "0") ?? 0
+        let existedBefore = FileManager.default.fileExists(atPath: destination.path)
+        let receiveTarget = destination.appendingPathExtension("svln.part")
+
+        if resumable {
+            let current = FileManager.default.fileExists(atPath: receiveTarget.path)
+                ? ((try? receiveTarget.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0)
+                : 0
+            guard current == offset else {
+                sendHTTP(connection, code: 409, body: "OFFSET_MISMATCH:\(current)")
+                return
+            }
+            if !FileManager.default.fileExists(atPath: receiveTarget.path) {
+                FileManager.default.createFile(atPath: receiveTarget.path, contents: nil)
+            }
+        } else {
+            try? FileManager.default.removeItem(at: receiveTarget)
+            FileManager.default.createFile(atPath: receiveTarget.path, contents: nil)
+        }
+
+        guard let handle = try? FileHandle(forWritingTo: receiveTarget) else {
+            sendHTTP(connection, code: 500, body: "Cannot create file")
+            return
+        }
+        if resumable { try? handle.seekToEnd() }
 
         var written: Int64 = 0
         do {
             if !initialBody.isEmpty {
-                try handle.write(contentsOf: initialBody)
-                written += Int64(initialBody.count)
+                let allowed = requestLength >= 0 ? min(Int64(initialBody.count), requestLength) : Int64(initialBody.count)
+                if allowed > 0 {
+                    try handle.write(contentsOf: initialBody.prefix(Int(allowed)))
+                    written += allowed
+                }
             }
         } catch {
-            try? handle.close(); try? FileManager.default.removeItem(at: destination)
+            try? handle.close()
             sendHTTP(connection, code: 500, body: "Write failed")
             return
         }
@@ -285,29 +807,71 @@ final class LocalTransferService: ObservableObject {
         let finish: (Bool) -> Void = { [weak self] success in
             try? handle.close()
             guard let self = self else { return }
-            if success {
-                let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? written
+
+            if !success {
+                if !resumable { try? FileManager.default.removeItem(at: receiveTarget) }
+                self.sendHTTP(connection, code: 500, body: "Receive failed")
+                return
+            }
+
+            let partSize = (try? receiveTarget.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            if totalSize > 0 && partSize < totalSize {
+                DispatchQueue.main.async { self.status = "تم حفظ جزء \(partSize) من \(totalSize) للملف \(destination.lastPathComponent)" }
+                self.sendHTTP(connection, code: 200, body: "PARTIAL:\(partSize)")
+                return
+            }
+            if totalSize > 0 && partSize > totalSize {
+                self.sendHTTP(connection, code: 409, body: "SIZE_MISMATCH:\(partSize)")
+                return
+            }
+
+            if existedBefore && conflict != "overwrite" {
+                try? FileManager.default.removeItem(at: receiveTarget)
+                if conflict == "cancel" {
+                    self.sendHTTP(connection, code: 409, body: "EXISTS")
+                } else {
+                    DispatchQueue.main.async { self.status = "تم تخطي \(destination.lastPathComponent) لأنه موجود مسبقًا" }
+                    self.sendHTTP(connection, code: 200, body: "SKIPPED")
+                }
+                return
+            }
+
+            do {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: receiveTarget, to: destination)
+                let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? partSize
                 DispatchQueue.main.async {
                     self.receivedFiles.insert(ReceivedFile(url: destination, name: destination.lastPathComponent, size: size, receivedAt: Date()), at: 0)
                     self.status = "تم استلام \(destination.lastPathComponent)"
                 }
                 self.sendHTTP(connection, code: 200, body: "OK")
-            } else {
-                try? FileManager.default.removeItem(at: destination)
-                self.sendHTTP(connection, code: 500, body: "Receive failed")
+            } catch {
+                self.sendHTTP(connection, code: 500, body: "Cannot finalize file")
             }
         }
 
-        if expected >= 0 && written >= expected { finish(true); return }
+        if requestLength >= 0 && written >= requestLength { finish(true); return }
+
         receiveMore = { [weak connection] in
             guard let connection = connection else { return }
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 128 * 1024) { data, _, complete, error in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 512 * 1024) { data, _, complete, error in
                 if let data = data, !data.isEmpty {
-                    do { try handle.write(contentsOf: data); written += Int64(data.count) }
-                    catch { finish(false); return }
+                    do {
+                        let remaining = requestLength >= 0 ? max(0, requestLength - written) : Int64(data.count)
+                        let allowed = min(Int64(data.count), remaining)
+                        if allowed > 0 {
+                            try handle.write(contentsOf: data.prefix(Int(allowed)))
+                            written += allowed
+                        }
+                    } catch {
+                        finish(false)
+                        return
+                    }
                 }
                 if error != nil { finish(false) }
-                else if (expected >= 0 && written >= expected) || complete { finish(true) }
+                else if (requestLength >= 0 && written >= requestLength) || complete { finish(true) }
                 else { receiveMore() }
             }
         }
@@ -316,9 +880,9 @@ final class LocalTransferService: ObservableObject {
 
     private func sendHTTP(_ connection: NWConnection, code: Int, body: String, contentType: String = "text/plain; charset=utf-8") {
         let reason: String
-        switch code { case 200: reason = "OK"; case 204: reason = "No Content"; case 400: reason = "Bad Request"; case 404: reason = "Not Found"; case 405: reason = "Method Not Allowed"; default: reason = "Internal Server Error" }
+        switch code { case 200: reason = "OK"; case 204: reason = "No Content"; case 400: reason = "Bad Request"; case 404: reason = "Not Found"; case 405: reason = "Method Not Allowed"; case 409: reason = "Conflict"; case 422: reason = "Unprocessable Entity"; default: reason = "Internal Server Error" }
         let data = Data(body.utf8)
-        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
+        let response = "HTTP/1.1 \(code) \(reason)\r\nContent-Length: \(data.count)\r\nContent-Type: \(contentType)\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST,OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type,X-File-Name,X-File-Size,X-Relative-Path,X-Entry-Type,X-Conflict-Policy,X-Transfer-Offset,X-SVLN-Sender-ID,X-SVLN-Sender-Name\r\nConnection: close\r\n\r\n"
         var packet = Data(response.utf8); packet.append(data)
         connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
     }
@@ -381,7 +945,10 @@ final class LocalTransferService: ObservableObject {
             if let index = self.devices.firstIndex(where: { $0.id == id || ($0.ip == ip && $0.port == port) }) {
                 let selected = self.devices[index].selected
                 self.devices[index] = LocalDevice(id: id, name: name, type: type, ip: ip, port: port, selected: selected, lastSeen: Date())
-            } else { self.devices.append(LocalDevice(id: id, name: name, type: type, ip: ip, port: port, selected: true, lastSeen: Date())) }
+            } else {
+                self.devices.append(LocalDevice(id: id, name: name, type: type, ip: ip, port: port, selected: true, lastSeen: Date()))
+            }
+            self.saveKnownDevices()
         }
     }
 
@@ -402,6 +969,11 @@ final class LocalTransferService: ObservableObject {
             if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
             index += 1
         }
+    }
+
+    private static func exactComponent(_ value: String) -> String? {
+        guard !value.isEmpty, value != ".", value != "..", !value.contains("/"), !value.contains("\0") else { return nil }
+        return value
     }
 
     private static func safeFileName(_ value: String) -> String {

@@ -7,13 +7,23 @@ on:
       - 'desktop/**'
       - '.github/workflows/build-desktop.yml'
   push:
-    branches: [ main ]
-    paths-ignore:
-      - 'desktop/release/**'
-      - 'DOWNLOAD_WINDOWS.md'
+    branches: [ main, pwa-iphone-windows-transfer ]
+    paths:
+      - 'desktop/app.py'
+      - 'desktop/discovery_responder.py'
+      - 'desktop/launcher.py'
+      - 'desktop/windows_runtime.py'
+      - 'desktop/installer.iss'
+      - 'desktop/requirements.txt'
+      - 'desktop/stop_running_app.ps1'
+      - 'desktop/web/**'
+      - 'VERSION'
+      - 'tools/qa_check.py'
+      - '.github/workflows/build-desktop.yml'
 
 permissions:
   contents: write
+
 
 jobs:
   build-windows:
@@ -32,6 +42,12 @@ jobs:
 
       - name: Validate Python source
         run: python -m py_compile desktop/app.py desktop/discovery_responder.py desktop/windows_runtime.py desktop/launcher.py
+
+      - name: Cross-platform QA guard
+        run: python tools/qa_check.py
+
+      - name: Transfer safety regression tests
+        run: python tools/test_transfer_safety.py
 
       - name: Build standalone EXE
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SendViaLocalNet --add-data "desktop/web;web" --paths desktop --distpath desktop/dist --workpath desktop/build desktop/launcher.py
@@ -58,22 +74,55 @@ jobs:
             desktop/release/SendViaLocalNet-Setup.exe
           if-no-files-found: error
 
-      - name: Publish installer to repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Publish direct Windows download files
+        if: github.event_name == 'push'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cat > DOWNLOAD_WINDOWS.md <<'EOF'
-          # تحميل برنامج Windows
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          BRANCH="${GITHUB_REF_NAME}"
+          REPO="${GITHUB_REPOSITORY}"
+          SOURCE="desktop/release/SendViaLocalNet-Setup.exe"
 
-          ملف التثبيت المباشر:
+          publish_file() {
+            local TARGET="$1"
+            local MESSAGE="$2"
+            local SHA
+            local B64_FILE
+            local PAYLOAD
 
-          https://github.com/aljwaal1/sentvialocalnet/raw/main/desktop/release/SendViaLocalNet-Setup.exe
+            SHA="$(gh api "repos/${REPO}/contents/${TARGET}?ref=${BRANCH}" --jq '.sha' 2>/dev/null || true)"
+            B64_FILE="$(mktemp)"
+            PAYLOAD="$(mktemp)"
 
-          الإصدار الجديد يعرض IP الحالي، يمنع تشغيل نسختين، ويغلق النسخة المفتوحة تلقائيًا أثناء التحديث ثم يعيد تشغيل البرنامج.
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add desktop/release/SendViaLocalNet-Setup.exe DOWNLOAD_WINDOWS.md
-          git commit -m "Build Windows installer [skip ci]" || echo "No changes"
-          git pull --rebase origin main
-          git push origin HEAD:main
+            # Keep the large EXE content out of the command line to avoid
+            # Windows/Git Bash "Argument list too long".
+            base64 "${SOURCE}" | tr -d '\r\n' > "${B64_FILE}"
+
+            if [ -n "${SHA}" ]; then
+              jq -n \
+                --arg message "${MESSAGE}" \
+                --arg branch "${BRANCH}" \
+                --arg sha "${SHA}" \
+                --rawfile content "${B64_FILE}" \
+                '{message:$message,branch:$branch,sha:$sha,content:$content}' > "${PAYLOAD}"
+            else
+              jq -n \
+                --arg message "${MESSAGE}" \
+                --arg branch "${BRANCH}" \
+                --rawfile content "${B64_FILE}" \
+                '{message:$message,branch:$branch,content:$content}' > "${PAYLOAD}"
+            fi
+
+            gh api --method PUT "repos/${REPO}/contents/${TARGET}" --input "${PAYLOAD}" >/dev/null
+            rm -f "${B64_FILE}" "${PAYLOAD}"
+          }
+
+          publish_file "desktop/release/SendViaLocalNet-Setup.exe" "Publish Windows installer v${VERSION} [skip ci]"
+          publish_file "desktop/release/SendViaLocalNet-Windows-v${VERSION}.exe" "Publish versioned Windows installer v${VERSION} [skip ci]"
+
+          echo "Windows direct downloads published:"
+          echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/desktop/release/SendViaLocalNet-Setup.exe"
+          echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/desktop/release/SendViaLocalNet-Windows-v${VERSION}.exe"

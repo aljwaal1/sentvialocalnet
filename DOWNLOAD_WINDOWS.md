@@ -1,7 +1,5 @@
 # تحميل برنامج Windows
 
-ملف التثبيت المباشر:
+الإصدار الحالي: **v2.1.9**
 
-https://github.com/aljwaal1/sentvialocalnet/raw/main/desktop/release/SendViaLocalNet-Setup.exe
-
-الإصدار الجديد يعرض IP الحالي، يمنع تشغيل نسختين، ويغلق النسخة المفتوحة تلقائيًا أثناء التحديث ثم يعيد تشغيل البرنامج.
+https://github.com/aljwaal1/sentvialocalnet/releases/download/v2.1.9/SendViaLocalNet-Windows-v2.1.9.exe

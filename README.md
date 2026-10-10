@@ -2,6 +2,19 @@
 
 منظومة محلية لإرسال واستقبال الملفات بين **Windows وAndroid وiPhone/iPad** داخل شبكة Wi‑Fi، دون Cloud ودون رفع الملفات إلى الإنترنت.
 
+
+## النقل باتجاهين
+
+النقل مباشر في الاتجاهين بين جميع المنصات:
+
+- Windows ⇄ iPhone/iPad
+- Windows ⇄ Android
+- iPhone/iPad ⇄ Android
+- iPhone/iPad ⇄ iPhone/iPad
+- Android ⇄ Android
+
+كل جهاز يمكن أن يكون مرسلًا أو مستقبلًا. الاستقبال يعمل محليًا على المنفذ `5051`، واكتشاف الأجهزة على `5052/UDP`.
+
 ## Android
 
 التطبيق Native Java ويدعم الاستقبال والإرسال المباشر، واكتشاف الأجهزة عبر UDP على المنفذ 5052 مع HTTP احتياطي على 5051.
@@ -29,9 +42,13 @@ POST /upload
 Content-Type: application/octet-stream
 X-File-Name: encoded-file-name
 X-File-Size: file-size
+X-Relative-Path: optional/relative/path
+X-Entry-Type: file | directory
 ```
 
 المنفذ: `5051`.
+
+عند نقل المجلدات ترسل النسخ Native إدخالات المجلد نفسها بالإضافة إلى الملفات، لذلك يتم الحفاظ على **المجلدات الفارغة** أيضًا. واجهة المتصفح/PWA تستطيع الحفاظ على بنية المجلدات التي تحتوي ملفات، لكن متصفحات الويب لا تكشف المجلدات الفارغة بشكل موثوق.
 
 ### اكتشاف الأجهزة
 
