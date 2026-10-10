@@ -21,7 +21,7 @@ struct ContentView: View {
             .navigationTitle("نقل محلي Pro")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Text("v2.1.13")
+                    Text("v2.1.14")
                         .font(.caption.bold())
                         .foregroundColor(.secondary)
                 }
