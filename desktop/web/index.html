@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.14</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.15</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -87,6 +87,21 @@ document.addEventListener('visibilitychange',()=>{
 
 let lastFailureReport=[];
 let lastTransferReport=null;
+let renamedForWindows=[];
+
+function recordWindowsRename(file,data){
+  if(!data||!data.renamed_for_windows)return;
+  const originalPath=relPath(file)||file.name;
+  const savedName=data.saved_filename||data.filename||file.name;
+  const key=originalPath+'|'+savedName;
+  if(renamedForWindows.some(x=>x.key===key))return;
+  renamedForWindows.push({
+    key,
+    originalPath,
+    originalName:data.original_filename||file.name,
+    savedName
+  });
+}
 
 
 function targetHealthSnapshot(){
@@ -123,6 +138,8 @@ function makeTransferReport({total,done,ok,fail,retryQueue,phase,cancelled}){
       target:x.task?.target||'',
       error:x.error||''
     })),
+    renamedForWindowsCount:renamedForWindows.length,
+    renamedForWindows:renamedForWindows.slice(0,200),
     finalFailures:lastFailureReport.slice(0,200)
   };
 }
@@ -142,6 +159,7 @@ function formatTransferReport(report){
   lines.push('Succeeded: '+report.succeeded);
   lines.push('TemporaryFailed: '+report.temporaryFailed);
   lines.push('FinalFailed: '+report.finalFailed);
+  lines.push('RenamedForWindowsCompatibility: '+(report.renamedForWindowsCount||0));
   lines.push('Workers: '+report.workerCount);
   lines.push('SelectedTargets: '+report.selectedTargets.join(', '));
   lines.push('UserAgent: '+report.userAgent);
@@ -158,6 +176,13 @@ function formatTransferReport(report){
   if(report.temporaryItems.length){
     report.temporaryItems.forEach((x,i)=>lines.push(
       '#'+(i+1)+' | '+x.file+' | '+x.path+' | '+x.size+' bytes | '+x.target+' | '+x.error
+    ));
+  }else lines.push('None');
+  lines.push('');
+  lines.push('--- Renamed for Windows compatibility (max 200) ---');
+  if(report.renamedForWindows&&report.renamedForWindows.length){
+    report.renamedForWindows.forEach((x,i)=>lines.push(
+      '#'+(i+1)+' | Original='+x.originalPath+' | SavedName='+x.savedName
     ));
   }else lines.push('None');
   lines.push('');
@@ -403,7 +428,10 @@ async function postRawLegacy(url,file){
     try{
       const smallTimeout=transferPhase==='recovery'?90000:25000;
       const r=await fetchWithTimeout(url,{method:'POST',headers,body:file},smallTimeout);
-      if(r.ok)return true;
+      if(r.ok){
+        try{recordWindowsRename(file,await r.clone().json())}catch(e){}
+        return true;
+      }
       let detail='';
       try{detail=(await r.text()).trim()}catch(e){}
       lastError='HTTP '+r.status+(detail?' — '+detail:'');
@@ -456,6 +484,7 @@ async function postRaw(base,file){
         const chunkTimeout=transferPhase==='recovery'?180000:90000;
         const r=await fetchWithTimeout(base+'/upload',{method:'POST',headers,body},chunkTimeout);
         if(r.ok){
+          try{recordWindowsRename(file,await r.clone().json())}catch(e){}
           advanced=true;
           break;
         }
@@ -504,6 +533,7 @@ async function sendFiles(){
   targetHealth.clear();
   lastFailureReport=[];
   lastTransferReport=null;
+  renamedForWindows=[];
   showTransferReportButton();
   renderFailureReport([]);
   setSendingUi(true);
