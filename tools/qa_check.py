@@ -48,7 +48,7 @@ web_ui = read("desktop/web/index.html")
 
 for marker, label in [
     ("WINDOWS_CHAR_REPLACEMENTS", "Windows incompatible-name repair"),
-    ("max_component = 180", "Windows overlong-name protection"),
+    ("WINDOWS_MAX_COMPONENT = 180", "Windows overlong-name protection"),
     ("renamed_for_windows", "Windows rename reporting"),
 ]:
     if marker not in windows_app:
