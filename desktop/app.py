@@ -64,21 +64,59 @@ WINDOWS_RESERVED_NAMES = {
 }
 
 
+WINDOWS_CHAR_REPLACEMENTS = {
+    "\\": "⧵",
+    "/": "∕",
+    ":": "：",
+    "*": "＊",
+    "?": "？",
+    '"': "＂",
+    "<": "＜",
+    ">": "＞",
+    "|": "｜",
+}
+
+
 def safe_filename(name: str) -> str:
-    """Return the original component unchanged when it is valid on Windows.
-    Never silently rename transferred files/folders.
+    """Keep valid Windows names exactly as-is and minimally repair only invalid ones.
+
+    Invalid ASCII Windows characters are replaced by visually similar Unicode
+    characters so names stay recognizable and distinct. Reserved DOS names are
+    prefixed with an underscore. Trailing spaces/dots are replaced rather than
+    silently removed.
     """
     value = str(name or "")
     if not value or value in (".", ".."):
         raise ValueError("اسم ملف/مجلد غير صالح")
-    if any(ch in WINDOWS_INVALID_CHARS or ord(ch) < 32 for ch in value):
-        raise ValueError(f"Windows لا يقبل الاسم كما هو: {value}")
-    if value.endswith((" ", ".")):
-        raise ValueError(f"Windows لا يقبل اسمًا ينتهي بمسافة أو نقطة: {value}")
+
+    # Fast path: preserve every already-valid name byte-for-byte.
     stem = value.split(".", 1)[0].upper()
+    if (
+        not any(ch in WINDOWS_INVALID_CHARS or ord(ch) < 32 for ch in value)
+        and not value.endswith((" ", "."))
+        and stem not in WINDOWS_RESERVED_NAMES
+    ):
+        return value
+
+    repaired = "".join(
+        WINDOWS_CHAR_REPLACEMENTS.get(ch, "_") if (ch in WINDOWS_INVALID_CHARS or ord(ch) < 32) else ch
+        for ch in value
+    )
+
+    # Windows forbids a final ASCII space or dot. Preserve the visible intent.
+    while repaired.endswith(" "):
+        repaired = repaired[:-1] + "␠"
+    while repaired.endswith("."):
+        repaired = repaired[:-1] + "．"
+
+    if not repaired or repaired in (".", ".."):
+        repaired = "_"
+
+    stem = repaired.split(".", 1)[0].upper()
     if stem in WINDOWS_RESERVED_NAMES:
-        raise ValueError(f"Windows لا يقبل الاسم المحجوز: {value}")
-    return value
+        repaired = "_" + repaired
+
+    return repaired
 
 
 def unique_path(directory: Path, name: str) -> Path:
@@ -505,10 +543,14 @@ class TransferHandler(BaseHTTPRequestHandler):
                 target_dir, _ = self._resolve_receive_target(filename, relative)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 self.state.event_queue.put(("log", f"تم إنشاء المجلد {target_dir}"))
-                self._json({"ok": True, "directory": str(target_dir)})
+                self._json({"ok": True, "directory": str(target_dir), "saved_name": target_dir.name})
                 return
 
+            original_filename = filename
             target, filename = self._resolve_receive_target(filename, relative)
+            renamed_for_windows = (filename != original_filename) or (
+                bool(relative) and str(target.relative_to(downloads_dir())).replace("\\", "/") != relative.replace("\\", "/")
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             total_size = int(self.headers.get("X-File-Size", str(length)) or length)
             offset_header = self.headers.get("X-Transfer-Offset")
@@ -523,7 +565,7 @@ class TransferHandler(BaseHTTPRequestHandler):
                         if not chunk:
                             break
                         remaining -= len(chunk)
-                    self._json({"ok": True, "skipped": True, "completed": True, "filename": target.name, "received": total_size})
+                    self._json({"ok": True, "skipped": True, "completed": True, "filename": target.name, "received": total_size, "renamed_for_windows": renamed_for_windows, "original_filename": original_filename, "saved_filename": target.name})
                     return
                 if conflict == "cancel":
                     self._json({"ok": False, "error": "الملف موجود مسبقًا", "filename": target.name}, 409)
@@ -552,7 +594,7 @@ class TransferHandler(BaseHTTPRequestHandler):
 
             received = temp.stat().st_size
             if total_size > 0 and received < total_size:
-                self._json({"ok": True, "partial": True, "received": received, "filename": target.name})
+                self._json({"ok": True, "partial": True, "received": received, "filename": target.name, "renamed_for_windows": renamed_for_windows, "original_filename": original_filename, "saved_filename": target.name})
                 return
             if total_size > 0 and received > total_size:
                 self._json({"ok": False, "error": "حجم الملف المستلم أكبر من المتوقع", "received": received}, 409)
@@ -562,7 +604,7 @@ class TransferHandler(BaseHTTPRequestHandler):
                 target.unlink()
             temp.replace(target)
             self.state.event_queue.put(("received", str(target)))
-            self._json({"ok": True, "completed": True, "received": received, "filename": target.name, "size": received})
+            self._json({"ok": True, "completed": True, "received": received, "filename": target.name, "size": received, "renamed_for_windows": renamed_for_windows, "original_filename": original_filename, "saved_filename": target.name})
         except ValueError as exc:
             self._json({"ok": False, "error": str(exc), "code": "INVALID_NAME"}, 422)
         except Exception as exc:
