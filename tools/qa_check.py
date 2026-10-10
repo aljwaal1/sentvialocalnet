@@ -42,6 +42,27 @@ m = re.search(r"VersionInfoVersion=([0-9.]+)", installer)
 if not m or m.group(1) != expected_file_version:
     errors.append(f"Windows VersionInfoVersion must be {expected_file_version}")
 
+# Critical transfer-safety invariants that protect the large iPhone -> Windows job.
+windows_app = read("desktop/app.py")
+web_ui = read("desktop/web/index.html")
+
+for marker, label in [
+    ("WINDOWS_CHAR_REPLACEMENTS", "Windows incompatible-name repair"),
+    ("max_component = 180", "Windows overlong-name protection"),
+    ("renamed_for_windows", "Windows rename reporting"),
+]:
+    if marker not in windows_app:
+        errors.append(f"{label}: required marker missing in desktop/app.py")
+
+for marker, label in [
+    ("probeTarget", "receiver reachability probe"),
+    ("load failed", "Safari Load failed handling"),
+    ("RenamedForWindowsCompatibility", "rename diagnostics report"),
+    ("targetHealth", "target circuit breaker"),
+]:
+    if marker not in web_ui:
+        errors.append(f"{label}: required marker missing in desktop/web/index.html")
+
 if errors:
     print("QA FAILED")
     for item in errors:
