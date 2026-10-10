@@ -657,8 +657,17 @@ async function sendFiles(){
           ok++;
         }catch(e){
           fail++;
-          const error=e&&e.message?e.message:String(e);
-          markTargetFailure(task.healthBase||'',error);
+          let error=e&&e.message?e.message:String(e);
+          if(isTransientConnectionError(error)){
+            const targetActuallyDown=!(await probeTarget(task.healthBase||''));
+            if(targetActuallyDown)markTargetFailure(task.healthBase||'',error);
+            else{
+              markTargetSuccess(task.healthBase||'');
+              if(/load failed/i.test(error)){
+                error += ' — الجهاز المستقبل متصل؛ الاحتمال الأكبر تعذر قراءة الملف من File Provider';
+              }
+            }
+          }
           failed.push(task.name+' — '+error);
           lastFailureReport.push({
             time:new Date().toLocaleString(),
@@ -695,7 +704,7 @@ async function sendFiles(){
     setSendingUi(false);
   }
 
-  lastTransferReport=makeTransferReport({total,done,ok,fail,retryQueue,phase:transferPhase,cancelled:transferCancelled});
+  lastTransferReport=makeTransferReport({total,done,ok,fail,retryQueue,phase:(transferCancelled?'cancelled':'completed'),cancelled:transferCancelled});
   showTransferReportButton();
 
   if(transferCancelled){
