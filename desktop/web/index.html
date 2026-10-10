@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.11</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.12</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -140,6 +140,70 @@ let transferRunning=false;
 let transferCancelled=false;
 let transferPhase='idle'; // idle | primary | recovery
 let activeControllers=new Set();
+const targetHealth=new Map();
+
+function isTransientConnectionError(error){
+  const reason=classifyFailure(error);
+  return reason==='انتهاء مهلة الاتصال' || reason==='انقطاع أو مشكلة شبكة';
+}
+
+function healthState(base){
+  if(!targetHealth.has(base))targetHealth.set(base,{failures:0,open:false,probe:null});
+  return targetHealth.get(base);
+}
+
+function markTargetSuccess(base){
+  const s=healthState(base);
+  s.failures=0;
+  s.open=false;
+}
+
+function markTargetFailure(base,error){
+  if(!isTransientConnectionError(error))return;
+  const s=healthState(base);
+  s.failures++;
+  if(s.failures>=3)s.open=true;
+}
+
+async function probeTarget(base){
+  const url=base ? base+'/upload' : '/api/info';
+  const controller=new AbortController();
+  activeControllers.add(controller);
+  const timer=setTimeout(()=>controller.abort(),5000);
+  try{
+    const r=await fetch(url,{method:'GET',cache:'no-store',signal:controller.signal});
+    return r.ok;
+  }catch(e){
+    return false;
+  }finally{
+    clearTimeout(timer);
+    activeControllers.delete(controller);
+  }
+}
+
+async function waitForTarget(base,targetName){
+  const s=healthState(base);
+  if(!s.open)return true;
+  if(s.probe)return s.probe;
+
+  s.probe=(async()=>{
+    while(!transferCancelled && s.open){
+      $('status').textContent='⏸️ تم إيقاف الإرسال مؤقتًا\nحدثت عدة مشاكل اتصال متتالية مع '+targetName+
+        '\nبانتظار عودة الاتصال... لن يتم اعتبار بقية الملفات فاشلة.';
+      if(await probeTarget(base)){
+        s.failures=0;
+        s.open=false;
+        toast('عاد الاتصال — تم استئناف الإرسال');
+        return true;
+      }
+      await new Promise(resolve=>setTimeout(resolve,2000));
+    }
+    return !transferCancelled;
+  })();
+
+  try{return await s.probe}
+  finally{s.probe=null}
+}
 
 function setSendingUi(active){
   const btn=$('sendNowBtn'),cancel=$('cancelSendBtn');
@@ -314,6 +378,7 @@ async function sendFiles(){
   transferRunning=true;
   transferCancelled=false;
   transferPhase='primary';
+  targetHealth.clear();
   lastFailureReport=[];
   renderFailureReport([]);
   setSendingUi(true);
@@ -328,10 +393,10 @@ async function sendFiles(){
 
   const tasks=[];
   for(const file of files){
-    if(toWindows)tasks.push({name:file.name,path:relPath(file),size:file.size,target:'Windows',run:()=>postRaw('',file)});
-    for(const ip of direct)tasks.push({name:file.name,path:relPath(file),size:file.size,target:ip,run:()=>postRaw('http://'+ip+':5051',file)});
+    if(toWindows)tasks.push({name:file.name,path:relPath(file),size:file.size,target:'Windows',healthBase:'',run:()=>postRaw('',file)});
+    for(const ip of direct)tasks.push({name:file.name,path:relPath(file),size:file.size,target:ip,healthBase:'http://'+ip+':5051',run:()=>postRaw('http://'+ip+':5051',file)});
     if(hub.length){
-      tasks.push({name:file.name,path:relPath(file),size:file.size,target:'Hub',run:async()=>{
+      tasks.push({name:file.name,path:relPath(file),size:file.size,target:'Hub',healthBase:'',run:async()=>{
         const sender=encodeURIComponent(localStorage.getItem(NAME_KEY)||'جهاز ويب');
         const url='/api/hub-upload?recipients='+encodeURIComponent(hub.join(','))+'&filename='+encodeURIComponent(file.name)+'&sender_name='+sender;
         let lastError='';
@@ -364,17 +429,27 @@ async function sendFiles(){
       const index=next++;
       if(index>=total)return;
       const task=tasks[index];
+
+      const healthy=await waitForTarget(task.healthBase||'',task.target||'الجهاز');
+      if(!healthy||transferCancelled)return;
+
       try{
         await task.run();
+        markTargetSuccess(task.healthBase||'');
         ok++;
       }catch(e){
         const error=e&&e.message?e.message:String(e);
+        markTargetFailure(task.healthBase||'',error);
         retryQueue.push({task,error});
       }
       done++;
       $('progress').style.width=Math.round(done/Math.max(1,total)*100)+'%';
-      $('status').textContent='وضع Turbo ⚡\nتمت معالجة '+done+' من '+total+'\nنجح: '+ok+' | متعثر مؤقتًا: '+retryQueue.length+
-        (retryQueue.length?'\nسيُعاد إرسال المتعثر تلقائيًا بعد المرور الأول.':'');
+
+      const circuitOpen=[...targetHealth.values()].some(s=>s.open);
+      $('status').textContent=circuitOpen
+        ? '⏸️ تم اكتشاف مشكلة اتصال متكررة. سيتم اختبار الاتصال قبل إرسال ملفات جديدة.'
+        : 'وضع Turbo ⚡\nتمت معالجة '+done+' من '+total+'\nنجح: '+ok+' | متعثر مؤقتًا: '+retryQueue.length+
+          (retryQueue.length?'\nسيُعاد إرسال المتعثر تلقائيًا بعد المرور الأول.':'');
     }
   }
 
@@ -392,12 +467,16 @@ async function sendFiles(){
         const entry=recovery[i],task=entry.task;
         $('status').textContent='مرحلة الاستعادة 🔄\nإعادة محاولة '+(i+1)+' من '+recovery.length+
           '\nالملف: '+task.name+'\nنجح حتى الآن: '+ok+' | فشل نهائي: '+fail;
+        const healthy=await waitForTarget(task.healthBase||'',task.target||'الجهاز');
+        if(!healthy||transferCancelled)break;
         try{
           await task.run();
+          markTargetSuccess(task.healthBase||'');
           ok++;
         }catch(e){
           fail++;
           const error=e&&e.message?e.message:String(e);
+          markTargetFailure(task.healthBase||'',error);
           failed.push(task.name+' — '+error);
           lastFailureReport.push({
             time:new Date().toLocaleString(),
