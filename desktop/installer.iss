@@ -1,5 +1,5 @@
 #define MyAppName "نقل محلي Pro"
-#define MyAppVersion "2.1.15"
+#define MyAppVersion "2.1.16"
 #define MyAppPublisher "SendViaLocalNet"
 #define MyAppExeName "SendViaLocalNet.exe"
 
@@ -9,7 +9,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=2.1.15.0
+VersionInfoVersion=2.1.16.0
 DefaultDirName={autopf}\SendViaLocalNet
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
