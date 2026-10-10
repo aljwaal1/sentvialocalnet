@@ -18,7 +18,7 @@
 </head>
 <body>
 <div class="app">
-<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.12</span><div class="online" id="onlineState">● متصل</div></div></nav>
+<nav class="nav"><div class="brand"><div class="logo">⇄</div><div><b>نقل محلي Pro</b><small>نسخة iPhone والمتصفح</small></div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge">v2.1.13</span><div class="online" id="onlineState">● متصل</div></div></nav>
 <section class="hero"><h1>إرسال ⇄ استقبال باتجاهين</h1><p>انقل الملفات في الاتجاهين بين iPhone وWindows وAndroid داخل نفس شبكة Wi‑Fi.</p><div class="stats"><div class="stat"><b id="targetCount">0</b><span>جهاز محدد</span></div><div class="stat"><b id="fileCount">0</b><span>ملف مختار</span></div><div class="stat"><b id="inboxCount">0</b><span>ملف وارد</span></div></div></section>
 <div class="grid">
 <section class="card"><div class="head"><h2>إعداد الجهاز</h2><span class="badge">يحفظ محليًا</span></div><label>اسم هذا الجهاز</label><input id="myName" placeholder="مثال: آيفون أسامة"><label>نوع الجهاز</label><select id="myType"><option value="iphone">🍎 آيفون / آيباد</option><option value="android">🤖 أندرويد</option><option value="laptop">💻 لابتوب</option><option value="web">🌐 متصفح</option></select><button class="btn primary full" style="margin-top:10px" onclick="saveIdentity()">حفظ وتفعيل الجهاز</button><div class="install" style="margin-top:12px"><b>تثبيت على الآيفون:</b> افتح قائمة المشاركة في Safari ثم اختر <b>إضافة إلى الشاشة الرئيسية</b>. ستظهر الأداة بأيقونة وتفتح كأنها تطبيق.</div><div class="head" style="margin-top:16px"><h2>الأجهزة المستهدفة</h2><button class="btn soft" onclick="selectAll()">تحديد الكل</button></div><div id="deviceList" class="devices"></div><div class="head" style="margin-top:16px"><h2>إضافة Android مباشر</h2><span class="badge">IP اختياري</span></div><div class="row"><input id="directName" placeholder="اسم الجهاز"><input id="directIp" inputmode="decimal" placeholder="192.168.1.20"></div><button class="btn soft full" style="margin-top:8px" onclick="saveDirectDevice()">+ حفظ الجهاز</button></section>
@@ -31,6 +31,7 @@
 <div id="moveModeNote" class="install" style="display:none;margin-bottom:10px"><b>النقل الحقيقي:</b> Safari/PWA لا يعطي الصفحة صلاحية حذف الملف الأصلي من On My iPhone بعد الإرسال. لذلك لن نحذف أي ملف من المتصفح تلقائيًا. استخدم نسخة iPhone Native إذا أردت حذف الأصل بعد نجاح النقل.</div>
 <div id="dropZone" class="drop"><div class="cloud">☁️</div><h3>ماذا تريد أن ترسل؟</h3><p>اختر ملفًا أو ملفات، أو أضف مجلدًا كاملًا. يمكنك الضغط على «إضافة مجلد» أكثر من مرة لإرسال عدة مجلدات معًا، بما فيها المجلدات الفرعية.</p><button class="btn primary full" style="margin-bottom:8px" onclick="openOnMyIPhonePicker()">📱 اختيار محتويات On My iPhone</button><div class="row"><button class="btn primary" onclick="singleInput.click()">📄 ملف</button><button class="btn primary" onclick="fileInput.click()">🗂️ ملفات</button></div><button class="btn soft full" style="margin-top:8px" onclick="folderInput.click()">📁 إضافة مجلد / إرسال الكل</button><p id="iosAllHint" style="margin-top:10px">على iPhone: افتح <b>On My iPhone</b> من نافذة Files ثم اختر المجلد الذي تريد نقله. إذا سمح iOS باختيار الجذر نفسه فسيتم إرسال كل ما بداخله؛ وإذا لم يسمح، اختر المجلدات الظاهرة واحدًا تلو الآخر.</p><input id="singleInput" type="file"><input id="fileInput" type="file" multiple><input id="folderInput" type="file" webkitdirectory directory multiple></div><div id="fileList" class="files" style="margin-top:10px"></div><div class="row" style="margin-top:10px"><button id="sendNowBtn" class="btn primary" onclick="sendFiles()">🚀 إرسال الآن</button><button id="cancelSendBtn" class="btn danger" style="display:none" onclick="cancelCurrentTransfer()">⛔ إيقاف</button></div><button class="btn soft full" style="margin-top:8px" onclick="clearFiles()">مسح الملفات</button><div id="status" class="status">جاهز للإرسال والاستقبال.</div>
 <div id="failureSummary" class="install" style="display:none;margin-top:10px"></div>
+<button id="copyTransferReportBtn" class="btn soft full" style="display:none;margin-top:8px" onclick="copyTransferReport()">📋 نسخ تقرير النقل</button>
 <button id="downloadFailureReportBtn" class="btn soft full" style="display:none;margin-top:8px" onclick="downloadFailureReport()">⬇️ تنزيل تقرير أسباب الفشل</button>
 <div class="progress"><span id="progress"></span></div></div>
 <div id="receivePanel" class="panel"><div class="head"><h2>الملفات الواردة</h2><button class="btn soft" onclick="loadInbox()">تحديث</button></div><div id="inbox" class="inbox"></div></div>
@@ -85,6 +86,114 @@ document.addEventListener('visibilitychange',()=>{
 
 
 let lastFailureReport=[];
+let lastTransferReport=null;
+
+
+function targetHealthSnapshot(){
+  return [...targetHealth.entries()].map(([base,s])=>({
+    target:base||'Windows/Local',
+    consecutiveFailures:Number(s.failures||0),
+    paused:!!s.open
+  }));
+}
+
+function makeTransferReport({total,done,ok,fail,retryQueue,phase,cancelled}){
+  const now=new Date();
+  return {
+    version:'2.1.13',
+    generatedAt:now.toISOString(),
+    localTime:now.toLocaleString(),
+    userAgent:navigator.userAgent,
+    platform:navigator.platform||'',
+    online:navigator.onLine,
+    phase:phase||transferPhase,
+    cancelled:!!cancelled,
+    total:Number(total||0),
+    processed:Number(done||0),
+    succeeded:Number(ok||0),
+    finalFailed:Number(fail||0),
+    temporaryFailed:Number((retryQueue||[]).length),
+    selectedTargets:[...selected],
+    workerCount:(/iPhone|iPad|iPod/i.test(navigator.userAgent)?3:6),
+    targetHealth:targetHealthSnapshot(),
+    temporaryItems:(retryQueue||[]).slice(0,100).map(x=>({
+      file:x.task?.name||'',
+      path:x.task?.path||'',
+      size:x.task?.size||0,
+      target:x.task?.target||'',
+      error:x.error||''
+    })),
+    finalFailures:lastFailureReport.slice(0,200)
+  };
+}
+
+function formatTransferReport(report){
+  if(!report)return 'لا يوجد تقرير نقل حتى الآن.';
+  const lines=[];
+  lines.push('===== SendViaLocalNet Transfer Report =====');
+  lines.push('Version: '+report.version);
+  lines.push('GeneratedAt: '+report.generatedAt);
+  lines.push('LocalTime: '+report.localTime);
+  lines.push('Phase: '+report.phase);
+  lines.push('Cancelled: '+report.cancelled);
+  lines.push('Online: '+report.online);
+  lines.push('Total: '+report.total);
+  lines.push('Processed: '+report.processed);
+  lines.push('Succeeded: '+report.succeeded);
+  lines.push('TemporaryFailed: '+report.temporaryFailed);
+  lines.push('FinalFailed: '+report.finalFailed);
+  lines.push('Workers: '+report.workerCount);
+  lines.push('SelectedTargets: '+report.selectedTargets.join(', '));
+  lines.push('UserAgent: '+report.userAgent);
+  lines.push('Platform: '+report.platform);
+  lines.push('');
+  lines.push('--- Target Health ---');
+  if(report.targetHealth.length){
+    report.targetHealth.forEach(x=>lines.push(
+      'Target='+x.target+' | ConsecutiveFailures='+x.consecutiveFailures+' | Paused='+x.paused
+    ));
+  }else lines.push('No target health data');
+  lines.push('');
+  lines.push('--- Temporary Failures (max 100) ---');
+  if(report.temporaryItems.length){
+    report.temporaryItems.forEach((x,i)=>lines.push(
+      '#'+(i+1)+' | '+x.file+' | '+x.path+' | '+x.size+' bytes | '+x.target+' | '+x.error
+    ));
+  }else lines.push('None');
+  lines.push('');
+  lines.push('--- Final Failures (max 200) ---');
+  if(report.finalFailures.length){
+    report.finalFailures.forEach((x,i)=>lines.push(
+      '#'+(i+1)+' | '+x.name+' | '+x.path+' | '+x.size+' bytes | '+x.target+' | '+x.reason+' | '+x.error
+    ));
+  }else lines.push('None');
+  lines.push('===== END REPORT =====');
+  return lines.join('\n');
+}
+
+async function copyTransferReport(){
+  const text=formatTransferReport(lastTransferReport);
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('تم نسخ تقرير النقل');
+  }catch(e){
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    toast('تم نسخ تقرير النقل');
+  }
+}
+
+function showTransferReportButton(){
+  const btn=$('copyTransferReportBtn');
+  if(btn)btn.style.display=lastTransferReport?'block':'none';
+}
 
 function classifyFailure(message){
   const m=String(message||'').toLowerCase();
@@ -380,6 +489,8 @@ async function sendFiles(){
   transferPhase='primary';
   targetHealth.clear();
   lastFailureReport=[];
+  lastTransferReport=null;
+  showTransferReportButton();
   renderFailureReport([]);
   setSendingUi(true);
   if(transferMode==='move'){
@@ -443,6 +554,8 @@ async function sendFiles(){
         retryQueue.push({task,error});
       }
       done++;
+      lastTransferReport=makeTransferReport({total,done,ok,fail,retryQueue,phase:transferPhase,cancelled:false});
+      showTransferReportButton();
       $('progress').style.width=Math.round(done/Math.max(1,total)*100)+'%';
 
       const circuitOpen=[...targetHealth.values()].some(s=>s.open);
@@ -488,6 +601,8 @@ async function sendFiles(){
             error
           });
         }
+        lastTransferReport=makeTransferReport({total,done,ok,fail,retryQueue,phase:transferPhase,cancelled:false});
+        showTransferReportButton();
       }
     }
   }catch(e){
@@ -510,6 +625,9 @@ async function sendFiles(){
     transferPhase='idle';
     setSendingUi(false);
   }
+
+  lastTransferReport=makeTransferReport({total,done,ok,fail,retryQueue,phase:transferPhase,cancelled:transferCancelled});
+  showTransferReportButton();
 
   if(transferCancelled){
     if(!lastFailureReport.length){
