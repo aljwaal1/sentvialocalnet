@@ -86,24 +86,35 @@ jobs:
           publish_file() {
             local TARGET="$1"
             local MESSAGE="$2"
-            local CONTENT
             local SHA
+            local B64_FILE
+            local PAYLOAD
 
-            CONTENT="$(base64 -w 0 "${SOURCE}")"
             SHA="$(gh api "repos/${REPO}/contents/${TARGET}?ref=${BRANCH}" --jq '.sha' 2>/dev/null || true)"
+            B64_FILE="$(mktemp)"
+            PAYLOAD="$(mktemp)"
+
+            # Keep the large EXE content out of the command line to avoid
+            # Windows/Git Bash "Argument list too long".
+            base64 "${SOURCE}" | tr -d '\r\n' > "${B64_FILE}"
 
             if [ -n "${SHA}" ]; then
-              gh api --method PUT "repos/${REPO}/contents/${TARGET}" \
-                -f message="${MESSAGE}" \
-                -f content="${CONTENT}" \
-                -f branch="${BRANCH}" \
-                -f sha="${SHA}" >/dev/null
+              jq -n \
+                --arg message "${MESSAGE}" \
+                --arg branch "${BRANCH}" \
+                --arg sha "${SHA}" \
+                --rawfile content "${B64_FILE}" \
+                '{message:$message,branch:$branch,sha:$sha,content:$content}' > "${PAYLOAD}"
             else
-              gh api --method PUT "repos/${REPO}/contents/${TARGET}" \
-                -f message="${MESSAGE}" \
-                -f content="${CONTENT}" \
-                -f branch="${BRANCH}" >/dev/null
+              jq -n \
+                --arg message "${MESSAGE}" \
+                --arg branch "${BRANCH}" \
+                --rawfile content "${B64_FILE}" \
+                '{message:$message,branch:$branch,content:$content}' > "${PAYLOAD}"
             fi
+
+            gh api --method PUT "repos/${REPO}/contents/${TARGET}" --input "${PAYLOAD}" >/dev/null
+            rm -f "${B64_FILE}" "${PAYLOAD}"
           }
 
           publish_file "desktop/release/SendViaLocalNet-Setup.exe" "Publish Windows installer v${VERSION} [skip ci]"
