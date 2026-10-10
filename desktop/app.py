@@ -63,6 +63,7 @@ WINDOWS_RESERVED_NAMES = {
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
+WINDOWS_MAX_COMPONENT = 180
 
 
 WINDOWS_CHAR_REPLACEMENTS = {
@@ -96,6 +97,7 @@ def safe_filename(name: str) -> str:
         not any(ch in WINDOWS_INVALID_CHARS or ord(ch) < 32 for ch in value)
         and not value.endswith((" ", "."))
         and stem not in WINDOWS_RESERVED_NAMES
+        and len(value) <= WINDOWS_MAX_COMPONENT
     ):
         return value
 
@@ -120,7 +122,7 @@ def safe_filename(name: str) -> str:
     # Keep each Windows path component comfortably below filesystem limits.
     # Only overlong/problematic names are changed. Preserve the extension and add
     # a deterministic short hash so two long names do not collapse to one file.
-    max_component = 180
+    max_component = WINDOWS_MAX_COMPONENT
     if len(repaired) > max_component:
         digest = hashlib.sha1(value.encode("utf-8", "surrogatepass")).hexdigest()[:8]
         suffix = "~" + digest
