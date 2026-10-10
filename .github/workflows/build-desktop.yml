@@ -46,6 +46,9 @@ jobs:
       - name: Cross-platform QA guard
         run: python tools/qa_check.py
 
+      - name: Transfer safety regression tests
+        run: python tools/test_transfer_safety.py
+
       - name: Build standalone EXE
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SendViaLocalNet --add-data "desktop/web;web" --paths desktop --distpath desktop/dist --workpath desktop/build desktop/launcher.py
 
